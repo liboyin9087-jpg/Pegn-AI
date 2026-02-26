@@ -1,4 +1,6 @@
 import type { Express, Request, Response } from 'express';
+import { authMiddleware } from '../middleware/auth.js';
+import { checkPermission } from '../middleware/rbac.js';
 import { searchService } from '../services/search.js';
 import { observability } from '../services/observability.js';
 
@@ -18,7 +20,7 @@ interface SearchRequest {
 
 export function registerSearchRoutes(app: Express): void {
   // Main search endpoint
-  app.post('/api/v1/search', async (req: Request, res: Response) => {
+  app.post('/api/v1/search', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
     try {
@@ -67,7 +69,7 @@ export function registerSearchRoutes(app: Express): void {
   });
 
   // Search suggestions endpoint
-  app.get('/api/v1/search/suggestions', async (req: Request, res: Response) => {
+  app.get('/api/v1/search/suggestions', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     try {
       const { q: query, workspaceId, limit = 5 } = req.query;
 
@@ -97,7 +99,7 @@ export function registerSearchRoutes(app: Express): void {
   });
 
   // Reindex document endpoint
-  app.post('/api/v1/search/reindex/:documentId', async (req: Request, res: Response) => {
+  app.post('/api/v1/search/reindex/:documentId', authMiddleware, checkPermission('workspace:admin', 'document'), async (req: Request, res: Response) => {
     try {
       const { documentId } = req.params;
 
@@ -119,7 +121,7 @@ export function registerSearchRoutes(app: Express): void {
   });
 
   // Advanced search with filters
-  app.post('/api/v1/search/advanced', async (req: Request, res: Response) => {
+  app.post('/api/v1/search/advanced', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
     try {

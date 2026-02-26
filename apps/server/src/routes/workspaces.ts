@@ -2,6 +2,7 @@ import type { Express, Response } from 'express';
 import { WorkspaceModel } from '../models/workspace.js';
 import { observability } from '../services/observability.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
+import { checkPermission } from '../middleware/rbac.js';
 
 export function registerWorkspaceRoutes(app: Express): void {
 
@@ -20,6 +21,16 @@ export function registerWorkspaceRoutes(app: Express): void {
         created_by: req.userId,
         settings,
       });
+
+      // Automatically add the creator as owner in workspace_members
+      const { pool } = await import('../db/client.js');
+      if (pool) {
+        await pool.query(
+          'INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, $3)',
+          [workspace.id, req.userId, 'owner']
+        );
+      }
+
       observability.info('Workspace created', { workspaceId: workspace.id, duration: Date.now() - startTime });
       res.status(201).json(workspace);
     } catch (error) {
@@ -28,52 +39,55 @@ export function registerWorkspaceRoutes(app: Express): void {
     }
   });
 
-  // Get workspace by ID (owner check)
-  app.get('/api/v1/workspaces/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
+  // Get workspace by ID (owner check via RBAC)
+  app.get('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     try {
-      const workspace = await WorkspaceModel.findById(req.params.id);
+      const workspace = await WorkspaceModel.findById(req.params.workspaceId);
       if (!workspace) { res.status(404).json({ error: 'Workspace not found' }); return; }
-      if (workspace.created_by !== req.userId) { res.status(403).json({ error: 'Forbidden' }); return; }
       res.json(workspace);
     } catch {
       res.status(500).json({ error: 'Failed to get workspace' });
     }
   });
 
-  // List workspaces (only mine)
+  // List workspaces (only those I am a member of)
   app.get('/api/v1/workspaces', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
       const { limit = 50, offset = 0 } = req.query;
-      const all = await WorkspaceModel.findAll(parseInt(limit as string), parseInt(offset as string));
-      const mine = all.filter((w: any) => w.created_by === req.userId);
-      res.json({ workspaces: mine });
+      const { pool } = await import('../db/client.js');
+      if (!pool) throw new Error('DB not available');
+
+      // Query through workspace_members instead of scanning all workspaces
+      const result = await pool.query(
+        `SELECT w.* FROM workspaces w
+         JOIN workspace_members m ON w.id = m.workspace_id
+         WHERE m.user_id = $1
+         ORDER BY w.updated_at DESC
+         LIMIT $2 OFFSET $3`,
+        [req.userId, parseInt(limit as string), parseInt(offset as string)]
+      );
+      res.json({ workspaces: result.rows });
     } catch {
       res.status(500).json({ error: 'Failed to list workspaces' });
     }
   });
 
-  // Update workspace (owner only)
-  app.put('/api/v1/workspaces/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
+  // Update workspace (admin only)
+  app.put('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     try {
-      const existing = await WorkspaceModel.findById(req.params.id);
-      if (!existing) { res.status(404).json({ error: 'Workspace not found' }); return; }
-      if (existing.created_by !== req.userId) { res.status(403).json({ error: 'Forbidden' }); return; }
       const { name, description, settings } = req.body;
-      const workspace = await WorkspaceModel.update(req.params.id, { name, description, settings });
+      const workspace = await WorkspaceModel.update(req.params.workspaceId, { name, description, settings });
       res.json(workspace);
     } catch {
       res.status(500).json({ error: 'Failed to update workspace' });
     }
   });
 
-  // Delete workspace (owner only)
-  app.delete('/api/v1/workspaces/:id', authMiddleware, async (req: AuthRequest, res: Response) => {
+  // Delete workspace (admin only)
+  app.delete('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     try {
-      const existing = await WorkspaceModel.findById(req.params.id);
-      if (!existing) { res.status(404).json({ error: 'Workspace not found' }); return; }
-      if (existing.created_by !== req.userId) { res.status(403).json({ error: 'Forbidden' }); return; }
-      await WorkspaceModel.delete(req.params.id);
-      res.json({ message: 'Workspace deleted', workspaceId: req.params.id });
+      await WorkspaceModel.delete(req.params.workspaceId);
+      res.json({ message: 'Workspace deleted', workspaceId: req.params.workspaceId });
     } catch {
       res.status(500).json({ error: 'Failed to delete workspace' });
     }

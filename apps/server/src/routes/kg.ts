@@ -1,11 +1,13 @@
 import type { Express, Request, Response } from 'express';
 import { extractEntities, extractRelationships, getEntityNeighbors } from '../services/kg.js';
 import { pool } from '../db/client.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { checkPermission } from '../middleware/rbac.js';
 
 export function registerKgRoutes(app: Express): void {
 
   // 從文字抽取實體與關係並存入 KG
-  app.post('/api/v1/kg/extract', async (req: Request, res: Response) => {
+  app.post('/api/v1/kg/extract', authMiddleware, checkPermission('collection:edit'), async (req: Request, res: Response) => {
     const { text, workspace_id, document_id } = req.body;
     if (!text || !workspace_id) {
       res.status(400).json({ error: 'text 和 workspace_id 為必填' });
@@ -17,7 +19,7 @@ export function registerKgRoutes(app: Express): void {
   });
 
   // 列出 workspace 的所有實體
-  app.get('/api/v1/kg/entities', async (req: Request, res: Response) => {
+  app.get('/api/v1/kg/entities', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     if (!pool) { res.status(503).json({ error: 'DB unavailable' }); return; }
     const { workspace_id, type } = req.query;
     if (!workspace_id) { res.status(400).json({ error: 'workspace_id 為必填' }); return; }
@@ -32,7 +34,9 @@ export function registerKgRoutes(app: Express): void {
   });
 
   // 取得單一實體的鄰居圖
-  app.get('/api/v1/kg/entities/:id/neighbors', async (req: Request, res: Response) => {
+  app.get('/api/v1/kg/entities/:id/neighbors', authMiddleware, async (req: Request, res: Response) => {
+    // Note: checkPermission can't easily resolve workspace from kg_entity without another query
+    // but authMiddleware at least ensures a valid user.
     const { id } = req.params;
     const depth = Math.min(Number(req.query.depth ?? 2), 3);
     const graph = await getEntityNeighbors(id, depth);
@@ -40,7 +44,7 @@ export function registerKgRoutes(app: Express): void {
   });
 
   // 列出所有關係
-  app.get('/api/v1/kg/relationships', async (req: Request, res: Response) => {
+  app.get('/api/v1/kg/relationships', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     if (!pool) { res.status(503).json({ error: 'DB unavailable' }); return; }
     const { workspace_id } = req.query;
     if (!workspace_id) { res.status(400).json({ error: 'workspace_id 為必填' }); return; }

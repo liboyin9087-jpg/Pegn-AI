@@ -7,9 +7,11 @@ interface KanbanViewProps {
     collection: Collection;
     data: any[];
     groupBy?: string;
+    onAddRow: () => void;
+    onEditCell: (rowId: string, propertyId: string, value: any) => void;
 }
 
-export function KanbanView({ collection, data, groupBy = 'status' }: KanbanViewProps) {
+export function KanbanView({ collection, data, groupBy = 'status', onAddRow, onEditCell }: KanbanViewProps) {
     // Mocking groups if no real data/schema options yet
     const groupOptions = [
         { label: '未開始', value: 'todo', color: '#e2e8f0' },
@@ -60,7 +62,10 @@ export function KanbanView({ collection, data, groupBy = 'status' }: KanbanViewP
                             ))
                         )}
 
-                        <button className="mt-1 flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200/50 rounded-lg transition-all text-sm w-full">
+                        <button
+                            onClick={onAddRow}
+                            className="mt-1 flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200/50 rounded-lg transition-all text-sm w-full"
+                        >
                             <Plus size={14} />
                             新增項目
                         </button>
@@ -88,7 +93,7 @@ function KanbanCard({ item }: { item: any }) {
             className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm cursor-grab active:cursor-grabbing transition-shadow"
         >
             <h4 className="text-sm font-semibold text-gray-800 mb-3 line-clamp-2">
-                {item.properties?.title || item.name || '無標題項目'}
+                {item.title || '無標題項目'}
             </h4>
 
             {/* Tags / Badges */}

@@ -59,7 +59,10 @@ function handleRoute(req: Request, res: Response): void {
   });
 }
 
+import { authMiddleware } from '../middleware/auth.js';
+import { checkPermission } from '../middleware/rbac.js';
+
 export function registerAiRoutes(app: Express): void {
-  app.get('/api/v1/ai/stream', handleStream);
-  app.post('/api/v1/ai/route', handleRoute);
+  app.get('/api/v1/ai/stream', authMiddleware, handleStream);
+  app.post('/api/v1/ai/route', authMiddleware, handleRoute);
 }

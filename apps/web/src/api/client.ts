@@ -75,6 +75,8 @@ export const deleteDocument = (id: string) =>
   api<any>(`/documents/${id}`, { method: 'DELETE' });
 export const renameDocument = (id: string, title: string) =>
   api<any>(`/documents/${id}/rename`, { method: 'PATCH', body: JSON.stringify({ title }) });
+export const updateDocument = (id: string, data: any) =>
+  api<any>(`/documents/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 
 // ── Search ───────────────────────────────────────────────────
 export const search = (query: string, wsId: string) =>
@@ -127,6 +129,8 @@ export const updateCollection = (id: string, data: any) =>
   api<any>(`/collections/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteCollection = (id: string) =>
   api<any>(`/collections/${id}`, { method: 'DELETE' });
+export const listCollectionDocuments = (id: string) =>
+  api<{ documents: any[] }>(`/collections/${id}/documents`);
 
 // ── Collection Views ─────────────────────────────────────────
 export const listCollectionViews = (collectionId: string) =>

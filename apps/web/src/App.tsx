@@ -329,8 +329,8 @@ export default function App() {
             {activeCollection ? (
               <CollectionView
                 collection={activeCollection}
+                workspaceId={workspace?.id}
                 views={views}
-                onAddRow={() => { }} // TODO: Implement add row
                 onUpdateView={() => { }}
               />
             ) : (

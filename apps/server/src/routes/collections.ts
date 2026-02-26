@@ -183,6 +183,32 @@ collectionsRouter.delete(
 );
 
 /**
+ * List all documents in a collection
+ */
+collectionsRouter.get(
+    '/:id/documents',
+    authMiddleware,
+    checkPermission('collection:view', 'collection'),
+    async (req: AuthRequest, res: Response, next: NextFunction) => {
+        const p = pool;
+        if (!p) return res.status(503).json({ error: 'Database not initialized' });
+
+        const { id } = req.params;
+        try {
+            const result = await p.query(
+                `SELECT d.* FROM documents d
+         WHERE d.collection_id = $1
+         ORDER BY d.updated_at DESC`,
+                [id]
+            );
+            res.json({ documents: result.rows });
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+/**
  * Export collection data
  */
 collectionsRouter.get(

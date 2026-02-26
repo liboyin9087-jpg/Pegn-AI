@@ -4,18 +4,51 @@ import { Layout, Table as TableIcon, Columns, Calendar as CalendarIcon, GalleryV
 import { Collection, CollectionView as ViewType } from '../../types/collection';
 import { TableView } from './TableView';
 import { KanbanView } from './KanbanView';
-import { exportCollection } from '../../api/client';
+import { exportCollection, updateCollectionView } from '../../api/client';
+import { useCollectionDocuments } from '../../hooks/useCollections';
 
 interface CollectionViewProps {
     collection: Collection;
+    workspaceId: string;
     views: ViewType[];
-    onAddRow: () => void;
     onUpdateView: (viewId: string, updates: any) => void;
 }
 
-export function CollectionView({ collection, views, onAddRow, onUpdateView }: CollectionViewProps) {
+export function CollectionView({ collection, workspaceId, views, onUpdateView }: CollectionViewProps) {
     const [activeViewId, setActiveViewId] = useState<string | null>(views[0]?.id || null);
     const activeView = views.find(v => v.id === activeViewId) || views[0];
+
+    const { documents, loading, addDocument, editDocument } = useCollectionDocuments(collection.id);
+
+    const handleAddRow = async () => {
+        try {
+            await addDocument(workspaceId, '新頁面');
+        } catch (error) {
+            console.error('Failed to add row:', error);
+        }
+    };
+
+    const handleEditCell = async (rowId: string, propertyId: string, value: any) => {
+        try {
+            // Find existing doc to get its properties
+            const doc = documents.find(d => d.id === rowId);
+            const currentProps = doc?.properties || {};
+            await editDocument(rowId, {
+                properties: { ...currentProps, [propertyId]: value }
+            });
+        } catch (error) {
+            console.error('Failed to edit cell:', error);
+        }
+    };
+
+    const handleUpdateView = async (viewId: string, updates: any) => {
+        try {
+            await updateCollectionView(viewId, updates);
+            onUpdateView(viewId, updates);
+        } catch (error) {
+            console.error('Failed to update view:', error);
+        }
+    };
 
     const handleExport = async () => {
         try {
@@ -70,7 +103,8 @@ export function CollectionView({ collection, views, onAddRow, onUpdateView }: Co
                 ))}
                 <button
                     onClick={handleExport}
-                    className="ml-auto mr-1 p-2 text-gray-400 hover:text-accent hover:bg-gray-50 rounded-lg transition-colors title='導出資料'"
+                    className="ml-auto mr-1 p-2 text-gray-400 hover:text-accent hover:bg-gray-50 rounded-lg transition-colors"
+                    title="導出資料"
                 >
                     <Download size={14} />
                 </button>
@@ -81,6 +115,11 @@ export function CollectionView({ collection, views, onAddRow, onUpdateView }: Co
 
             {/* View Content */}
             <div className="flex-1 overflow-hidden relative">
+                {loading && (
+                    <div className="absolute inset-0 bg-white/50 z-10 flex items-center justify-center">
+                        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                    </div>
+                )}
                 <AnimatePresence mode="wait">
                     <motion.div
                         key={activeView?.id || 'empty'}
@@ -93,21 +132,23 @@ export function CollectionView({ collection, views, onAddRow, onUpdateView }: Co
                         {activeView?.type === 'table' ? (
                             <TableView
                                 collection={collection}
-                                data={[]} // TODO: Fetch documents for this collection
-                                onAddRow={onAddRow}
-                                onEditCell={() => { }}
+                                data={documents}
+                                onAddRow={handleAddRow}
+                                onEditCell={handleEditCell}
                             />
                         ) : activeView?.type === 'board' ? (
                             <KanbanView
                                 collection={collection}
-                                data={[]} // TODO: Fetch documents for this collection
+                                data={documents}
+                                onAddRow={handleAddRow}
+                                onEditCell={handleEditCell}
                             />
                         ) : (
                             <div className="flex flex-col items-center justify-center h-full text-gray-400">
                                 <Layout size={48} className="mb-4 opacity-20" />
                                 <p>視圖模式「{activeView?.type}」開發中</p>
                                 <button
-                                    onClick={() => onUpdateView(activeView.id, { type: 'table' })}
+                                    onClick={() => handleUpdateView(activeView.id, { type: 'table' })}
                                     className="mt-4 text-accent hover:underline text-sm"
                                 >
                                     切換至表格視圖

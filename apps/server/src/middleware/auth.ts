@@ -9,13 +9,20 @@ export interface AuthRequest extends Request {
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
 
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
+  let token = '';
   const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Missing or invalid Authorization header' });
+
+  if (header?.startsWith('Bearer ')) {
+    token = header.slice(7);
+  } else if (req.query.token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    res.status(401).json({ error: 'Missing or invalid authentication' });
     return;
   }
 
-  const token = header.slice(7);
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
     req.userId = payload.userId;

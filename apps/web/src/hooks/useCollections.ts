@@ -111,3 +111,61 @@ export function useCollectionViews(collectionId: string | undefined) {
         removeView
     };
 }
+export function useCollectionDocuments(collectionId: string | undefined) {
+    const [documents, setDocuments] = useState<any[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<Error | null>(null);
+
+    const fetchDocuments = useCallback(async () => {
+        if (!collectionId) return;
+        setLoading(true);
+        try {
+            const data = await api.listCollectionDocuments(collectionId);
+            setDocuments(data.documents);
+            setError(null);
+        } catch (err) {
+            setError(err as Error);
+        } finally {
+            setLoading(false);
+        }
+    }, [collectionId]);
+
+    useEffect(() => {
+        fetchDocuments();
+    }, [fetchDocuments]);
+
+    const addDocument = async (workspaceId: string, title: string) => {
+        if (!collectionId) return;
+        try {
+            const res = await api.api<any>('/documents', {
+                method: 'POST',
+                body: JSON.stringify({ workspace_id: workspaceId, collection_id: collectionId, title })
+            });
+            setDocuments(prev => [res, ...prev]);
+            return res;
+        } catch (err) {
+            setError(err as Error);
+            throw err;
+        }
+    };
+
+    const editDocument = async (id: string, updates: any) => {
+        try {
+            const res = await api.updateDocument(id, updates);
+            setDocuments(prev => prev.map(d => d.id === id ? res : d));
+            return res;
+        } catch (err) {
+            setError(err as Error);
+            throw err;
+        }
+    };
+
+    return {
+        documents,
+        loading,
+        error,
+        fetchDocuments,
+        addDocument,
+        editDocument
+    };
+}

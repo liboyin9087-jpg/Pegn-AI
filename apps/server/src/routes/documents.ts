@@ -9,24 +9,14 @@ import { searchService } from '../services/search.js';
 
 export function registerDocumentRoutes(app: Express): void {
 
-  // 共用：驗證 workspace 歸屬當前用戶
-  async function assertWorkspaceOwner(workspaceId: string, userId: string, res: Response): Promise<boolean> {
-    const ws = await WorkspaceModel.findById(workspaceId);
-    if (!ws) { res.status(404).json({ error: 'Workspace not found' }); return false; }
-    if (ws.created_by !== userId) { res.status(403).json({ error: 'Forbidden' }); return false; }
-    return true;
-  }
-
   // Create document
-  app.post('/api/v1/documents', authMiddleware, checkPermission('document:create'), async (req: AuthRequest, res: Response) => {
+  app.post('/api/v1/documents', authMiddleware, checkPermission('collection:edit'), async (req: AuthRequest, res: Response) => {
     try {
       const { workspace_id, title, content, yjs_state, metadata, collection_id, properties } = req.body;
       if (!workspace_id || !title) {
         res.status(400).json({ error: 'workspace_id and title are required' });
         return;
       }
-      // 驗證 workspace 歸屬
-      if (!(await assertWorkspaceOwner(workspace_id, req.userId!, res))) return;
 
       const document = await DocumentModel.create({
         workspace_id,
@@ -51,7 +41,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Get document by ID
-  app.get('/api/v1/documents/:id', authMiddleware, checkPermission('document:view', 'document' as any), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/documents/:id', authMiddleware, checkPermission('collection:view', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const document = await DocumentModel.findById(req.params.id);
       if (!document) { res.status(404).json({ error: 'Document not found' }); return; }
@@ -64,13 +54,10 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  // List documents in workspace (workspace 歸屬驗證)
-  app.get('/api/v1/workspaces/:workspaceId/documents', authMiddleware, async (req: AuthRequest, res: Response) => {
+  // List documents in workspace
+  app.get('/api/v1/workspaces/:workspaceId/documents', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
     try {
       const { workspaceId } = req.params;
-      if (!(await assertWorkspaceOwner(workspaceId, req.userId!, res))) return;
-      // Also check RBAC via manual check if needed, or we could wrap assertWorkspaceOwner
-      // For now, let's keep assertWorkspaceOwner as it is, it's a basic check.
       const { limit = 50, offset = 0 } = req.query;
       const documents = await DocumentModel.findByWorkspace(
         workspaceId, parseInt(limit as string), parseInt(offset as string)
@@ -82,7 +69,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Update document (title rename + content)
-  app.put('/api/v1/documents/:id', authMiddleware, checkPermission('document:edit', 'document' as any), async (req: AuthRequest, res: Response) => {
+  app.put('/api/v1/documents/:id', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { title, content, yjs_state, metadata, collection_id, properties } = req.body;
       const document = await DocumentModel.update(req.params.id, {
@@ -107,7 +94,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Rename document (PATCH for just title)
-  app.patch('/api/v1/documents/:id/rename', authMiddleware, checkPermission('document:edit', 'document' as any), async (req: AuthRequest, res: Response) => {
+  app.patch('/api/v1/documents/:id/rename', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { title } = req.body;
       if (!title || typeof title !== 'string') {
@@ -132,7 +119,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Set document parent (for nested pages)
-  app.patch('/api/v1/documents/:id/parent', authMiddleware, async (req: AuthRequest, res: Response) => {
+  app.patch('/api/v1/documents/:id/parent', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { parent_id } = req.body;
       const existing = await DocumentModel.findById(req.params.id);
@@ -151,7 +138,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Delete document
-  app.delete('/api/v1/documents/:id', authMiddleware, checkPermission('document:delete', 'document' as any), async (req: AuthRequest, res: Response) => {
+  app.delete('/api/v1/documents/:id', authMiddleware, checkPermission('collection:delete', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const deleted = await DocumentModel.delete(req.params.id);
       if (!deleted) { res.status(404).json({ error: 'Document not found' }); return; }
@@ -163,7 +150,7 @@ export function registerDocumentRoutes(app: Express): void {
   });
 
   // Get document blocks
-  app.get('/api/v1/documents/:id/blocks', authMiddleware, async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/documents/:id/blocks', authMiddleware, checkPermission('collection:view', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const blocks = await BlockModel.findByDocument(req.params.id);
       res.json({ blocks });
@@ -172,10 +159,9 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  // Search documents in workspace (workspace 歸屬驗證)
-  app.get('/api/v1/workspaces/:workspaceId/documents/search', authMiddleware, async (req: AuthRequest, res: Response) => {
+  // Search documents in workspace
+  app.get('/api/v1/workspaces/:workspaceId/documents/search', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
     try {
-      if (!(await assertWorkspaceOwner(req.params.workspaceId, req.userId!, res))) return;
       const { q: query, limit = 20 } = req.query;
       if (!query || typeof query !== 'string') {
         res.status(400).json({ error: 'Query "q" is required' });
