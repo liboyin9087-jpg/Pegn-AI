@@ -1,49 +1,122 @@
-# AI‑Native Work OS — Phase 1 POC
+# Pegn-AI: The AI-Native Work OS (Phase 1 POC)
 
-此專案為 Phase 1 可跑 POC：包含 Block Editor（BlockSuite + Yjs）、Hocuspocus 同步伺服器、AI Router + SSE 串流範例與基礎 API Skeleton。
+![Pegn-AI Banner](https://img.shields.io/badge/Status-Phase_1_POC-blueviolet?style=for-the-badge)
+![Tech Stack](https://img.shields.io/badge/Stack-React_|_Node_|_Postgres_|_Gemini-blue?style=for-the-badge)
 
-## 先決條件
-- Node.js 18+
-- Docker（用於 Postgres/Redis）
+**Pegn-AI** is an AI-first collaborative workspace designed to bridge the gap between human creativity and autonomous agentic workflows. It combines a powerful block-based editor with deep knowledge retrieval and multi-agent orchestration.
 
-## 快速開始
-1. 啟動基礎服務
-```bash
-docker compose up -d
+---
+
+## 🌟 Core Pillars
+
+### 1. Collaborative Block Intelligence
+*   **Editor Experience**: Built on **BlockSuite**, providing a Notion-like editing experience with text, headings, code blocks, and more.
+*   **Real-time Sync**: Powered by **Yjs** (CRDT) and **Hocuspocus**, ensuring sub-500ms convergence for world-wide collaboration.
+*   **Persistence**: Automated 60-second snapshot system to prevent data loss and support version rollback.
+
+### 2. Hybrid Knowledge Retrieval
+*   **Hybrid Search**: A dual-engine approach combining **BM25 full-text search** with **PostgreSQL pgvector** similarity search.
+*   **GraphRAG Integration**: Leverages knowledge graph entities and relationships to provide context-aware AI responses.
+*   **Real-time Indexing**: Automatic indexing of document blocks as you type.
+
+### 3. Agentic Workflows
+*   **Autonomous Agents**: Ready-to-use templates for **Research** and **Summarization**.
+*   **SSE Progress Tracking**: Real-time feedback for multi-step agent execution via Server-Sent Events.
+*   **Supervisor Pattern**: Foundation for multi-agent coordination and recursive task decomposition.
+
+### 4. Enterprise-Ready Observability
+*   **Performance Tracking**: Full HTTP lifecycle monitoring.
+*   **Health Dashboard**: Real-time system status including DB connectivity and CRDT health.
+*   **Metrics**: Prometheus-ready metrics export for production scalability.
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | React 19, Vite, Framer Motion, Tailwind CSS, Lucide Icons |
+| **Editor** | BlockSuite, Yjs, Hocuspocus (Sync) |
+| **Backend** | Node.js (Express), TypeScript, tsx |
+| **Database** | PostgreSQL + pgvector extension, Redis (Caching) |
+| **AI/ML** | Google Gemini (2.0/2.5 Flash), Vector Embeddings |
+| **Tests** | Vitest, React Testing Library |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js**: 18.0 or higher
+- **Docker**: For PostgreSQL and Redis services
+- **Gemini API Key**: Required for AI features
+
+### Quick Start
+1. **Clone and Install**
+   ```bash
+   git clone https://github.com/liboyin9087-jpg/Pegn-AI.git
+   cd Pegn-AI
+   npm install
+   ```
+
+2. **Environment Setup**
+   ```bash
+   cp apps/server/.env.example apps/server/.env
+   # Add your GEMINI_API_KEY to apps/server/.env
+   ```
+
+3. **Spin up Infrastructure**
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Database Migrations**
+   ```bash
+   cd apps/server
+   npm run db:migrate # Applies RBAC and Search Schema
+   ```
+
+5. **Run Development Mode**
+   ```bash
+   # From root
+   npm run dev
+   ```
+
+### Service Map
+- **Frontend App**: [http://localhost:5177](http://localhost:5177)
+- **API Server**: [http://localhost:4000](http://localhost:4000)
+- **Sync Server**: `ws://localhost:1234`
+- **Metrics**: `http://localhost:4000/metrics`
+
+---
+
+## 📂 Project Structure
+
+```text
+pegn-ai/
+├── apps/
+│   ├── server/           # Express Server + Hocuspocus + Agent Services
+│   │   ├── src/db/       # Migrations & pgvector schema
+│   │   └── src/routes/   # AI, Search, and GraphRAG endpoints
+│   └── web/              # React + BlockSuite Frontend
+│       ├── src/components/agent-dashboard/   # Advanced AI UI
+│       └── src/components/database/          # Collection views
+├── docker-compose.yml    # Postgres (pgvector) + Redis
+└── LOCAL_RUN.md          # Troubleshooting & advanced setup
 ```
-（若你的環境仍是舊版 Docker，可改用 `docker-compose`）
 
-2. 安裝依賴
-```bash
-npm install
-```
+---
 
-3. 啟動開發環境（前後端同時）
-```bash
-npm run dev
-```
+## 🗺️ Roadmap (Phase 2)
+- [ ] **Multi-Agent Orchestration**: Recursive task breakdown with Supervisor-Worker pattern.
+- [ ] **Billing & Quotas**: Integration with Stripe and Token usage tracking.
+- [ ] **Advanced KG Visualization**: Interactive Knowledge Graph explorer.
+- [ ] **Offline-first Mobile**: Progressive Web App (PWA) support.
 
-## Indexer / 搜尋測試
-1. 進入 Web UI 後點選「寫入示範資料」即可寫入索引。
-2. 在搜尋欄輸入關鍵字並按下搜尋，後端會使用 BM25（若提供 embedding 則合併 pgvector）。
+---
 
-## 服務位置
-- Web UI：`http://localhost:5177`
-- API：`http://localhost:4000`
-- Hocuspocus Sync：`ws://localhost:1234`
+## 📄 License
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 環境變數
-請複製並調整：
-```bash
-cp apps/server/.env.example apps/server/.env
-cp apps/web/.env.example apps/web/.env
-```
-
-## 注意事項
-- 本 POC 的 AI Router 與 SSE 目前為示範串流（非真實 LLM）
-- BlockSuite API 若與目前版本不一致，可在 `apps/web/src/components/Editor.tsx` 依實際套件文件調整
-
-## 專案結構 (初步)
-- `apps/server/`: 包含 Hocuspocus WebSocket 伺服器、API 服務和後端邏輯。
-- `apps/web/`: 包含 Block Editor 前端應用。
-- `docker-compose.yml`: 本地開發環境的 Docker 配置。
+---
+*Developed by Pegn AI Team - 2026*
