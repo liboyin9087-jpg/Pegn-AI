@@ -181,6 +181,13 @@ REDIS_URL=redis://localhost:6379
 - Metrics retention: 1000 entries per type
 - Cleanup interval: 1 hour
 
+
+## 🧭 Gap Analysis (Core 4 Pillars)
+
+For a prioritized implementation-completeness checklist in Traditional Chinese, see:
+
+- `docs/core-features-gap-analysis.zh-TW.md`
+
 ## 🎯 Next Steps (Phase 2 Preparation)
 
 This implementation provides a solid foundation for Phase 2 features:
