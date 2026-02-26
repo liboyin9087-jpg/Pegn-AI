@@ -70,7 +70,8 @@ collectionsRouter.post(
         const p = pool;
         if (!p) return res.status(503).json({ error: 'Database not initialized' });
 
-        const { workspaceId, name, description, icon, schema } = req.body;
+        const workspaceId = req.body?.workspace_id || req.body?.workspaceId;
+        const { name, description, icon, schema } = req.body;
         const userId = req.userId;
 
         if (!workspaceId || !name) {

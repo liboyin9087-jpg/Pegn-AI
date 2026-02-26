@@ -11,13 +11,27 @@ export interface RBACRequest extends AuthRequest {
 /**
  * Middleware to check if the user has a specific permission in a workspace.
  * Assumes authMiddleware has already run and populated req.userId.
- * Expects workspaceId to be available in req.params, req.body, or req.query.
- * If workspaceId is missing but id (collection ID) is present in params, it will resolve it.
+ * Expects workspace_id/workspaceId to be available in req.params, req.body, or req.query.
+ * If workspace id is missing but a supported resource id is present, it will resolve it.
  */
-export const checkPermission = (requiredPermission: string, resourceType: 'collection' | 'collection_view' | 'document' | 'none' = 'none') => {
+export const checkPermission = (
+    requiredPermission: string,
+    resourceType: 'collection' | 'collection_view' | 'document' | 'kg_entity' | 'comment_thread' | 'inbox_notification' | 'none' = 'none'
+) => {
     return async (req: RBACRequest, res: Response, next: NextFunction) => {
         const userId = req.userId;
-        let workspaceId = req.params.workspaceId || req.body.workspaceId || req.query.workspaceId;
+        const fromQuery = (k: 'workspace_id' | 'workspaceId') => {
+            const v = req.query[k];
+            return typeof v === 'string' ? v : undefined;
+        };
+
+        let workspaceId =
+            req.params.workspace_id ||
+            req.params.workspaceId ||
+            req.body.workspace_id ||
+            req.body.workspaceId ||
+            fromQuery('workspace_id') ||
+            fromQuery('workspaceId');
 
         if (!userId) {
             return res.status(401).json({ error: 'Unauthorized: No user ID found' });
@@ -46,9 +60,30 @@ export const checkPermission = (requiredPermission: string, resourceType: 'colle
                         WHERE v.id = $1
                     `, [req.params.id]);
                     if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
-                } else if (resourceType === 'document' && req.params.id) {
-                    const result = await p.query('SELECT workspace_id FROM documents WHERE id = $1', [req.params.id]);
-                    if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
+                } else if (resourceType === 'document') {
+                    const documentId = req.params.id || req.params.document_id || req.params.documentId;
+                    if (documentId) {
+                        const result = await p.query('SELECT workspace_id FROM documents WHERE id = $1', [documentId]);
+                        if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
+                    }
+                } else if (resourceType === 'comment_thread') {
+                    const threadId = req.params.thread_id || req.params.threadId || req.params.id;
+                    if (threadId) {
+                        const result = await p.query('SELECT workspace_id FROM comment_threads WHERE id = $1', [threadId]);
+                        if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
+                    }
+                } else if (resourceType === 'inbox_notification') {
+                    const notificationId = req.params.notification_id || req.params.notificationId || req.params.id;
+                    if (notificationId) {
+                        const result = await p.query('SELECT workspace_id FROM inbox_notifications WHERE id = $1', [notificationId]);
+                        if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
+                    }
+                } else if (resourceType === 'kg_entity') {
+                    const entityId = req.params.entity_id || req.params.id;
+                    if (entityId) {
+                        const result = await p.query('SELECT workspace_id FROM kg_entities WHERE id = $1', [entityId]);
+                        if ((result.rowCount ?? 0) > 0) workspaceId = result.rows[0].workspace_id;
+                    }
                 }
             } catch (err) {
                 observability.error('RBAC Resource Resolution Error', { error: err });
@@ -80,16 +115,40 @@ export const checkPermission = (requiredPermission: string, resourceType: 'colle
             const { legacy_role, role_name, permissions } = result.rows[0];
 
             // 2. Determine permissions
-            let userPermissions: string[] = permissions || [];
+            let userPermissions: string[] = Array.isArray(permissions)
+                ? permissions
+                : typeof permissions === 'string'
+                    ? (() => {
+                        try {
+                            const parsed = JSON.parse(permissions);
+                            return Array.isArray(parsed) ? parsed : [];
+                        } catch {
+                            return [];
+                        }
+                    })()
+                    : [];
 
             // If it's a legacy role, map it to default permissions
-            if (!permissions && legacy_role) {
+            if (userPermissions.length === 0 && legacy_role) {
                 if (legacy_role === 'owner' || legacy_role === 'admin') {
-                    userPermissions = ['workspace:admin', 'collection:create', 'collection:edit', 'collection:delete', 'collection:view'];
+                    userPermissions = [
+                        'workspace:admin',
+                        'collection:create', 'collection:edit', 'collection:delete', 'collection:view',
+                        'document:create', 'document:edit', 'document:delete', 'document:view',
+                        'comment:view', 'comment:create', 'comment:resolve'
+                    ];
                 } else if (legacy_role === 'editor') {
-                    userPermissions = ['collection:create', 'collection:edit', 'collection:view'];
+                    userPermissions = [
+                        'collection:create', 'collection:edit', 'collection:view',
+                        'document:create', 'document:edit', 'document:view',
+                        'comment:view', 'comment:create', 'comment:resolve'
+                    ];
                 } else if (legacy_role === 'viewer') {
-                    userPermissions = ['collection:view'];
+                    userPermissions = [
+                        'collection:view',
+                        'document:view',
+                        'comment:view', 'comment:create'
+                    ];
                 }
             }
 

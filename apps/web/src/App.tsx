@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PanelLeft, Sparkles } from 'lucide-react';
 import AuthPage from './components/AuthPage';
@@ -9,14 +9,19 @@ import CommandBar from './components/CommandBar';
 import OnboardingModal from './components/OnboardingModal';
 import UploadModal from './components/UploadModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import InboxPanel from './components/InboxPanel';
 import { DashboardShowcase } from './components/agent-dashboard/DashboardShowcase';
 import { CollectionView } from './components/database/CollectionView';
 import { useCollections, useCollectionViews } from './hooks/useCollections';
 import { Collection } from './types/collection';
 import {
-  getToken, setToken, clearToken, getMe,
+  getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
   listWorkspaces, createWorkspace,
   listDocuments, createDocument, deleteDocument, renameDocument,
+  acceptInvite,
+  listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
+  getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
+  type InboxNotification, type OfflineQueueMetricsSource,
 } from './api/client';
 
 export default function App() {
@@ -29,6 +34,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [focusThreadId, setFocusThreadId] = useState<string | null>(null);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [inboxNotifications, setInboxNotifications] = useState<InboxNotification[]>([]);
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [offlineQueueDepth, setOfflineQueueDepth] = useState(0);
+  const queueDepthReportTimerRef = useRef<number | null>(null);
+  const lastIntervalDepthRef = useRef<number | null>(null);
 
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -50,6 +64,12 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
+      const inviteMatch = window.location.pathname.match(/^\/invite\/([^/]+)$/);
+      if (inviteMatch?.[1]) {
+        sessionStorage.setItem('pending_invite_token', inviteMatch[1]);
+        window.history.replaceState(null, '', '/');
+      }
+
       // Handle OAuth callback — token arrives in URL hash
       const hash = window.location.hash;
       if (hash.startsWith('#token=')) {
@@ -71,6 +91,16 @@ export default function App() {
       try {
         const { user: me } = await getMe();
         setUser(me);
+        setOfflineRolloutUserId(me?.id ?? me?.user_id ?? null);
+        const pendingInviteToken = sessionStorage.getItem('pending_invite_token');
+        if (pendingInviteToken) {
+          try {
+            await acceptInvite(pendingInviteToken);
+            sessionStorage.removeItem('pending_invite_token');
+          } catch (error) {
+            console.error('Failed to accept invite:', error);
+          }
+        }
         await loadWorkspace();
       } catch {
         clearToken();
@@ -93,17 +123,66 @@ export default function App() {
     if (isNew) setShowOnboarding(true);
   };
 
+  const refreshInbox = useCallback(async (status: 'unread' | 'all' = 'all') => {
+    setInboxLoading(true);
+    try {
+      const { notifications, unread_count } = await listInboxNotifications(status);
+      setInboxNotifications(notifications);
+      setInboxUnreadCount(unread_count);
+    } catch (error) {
+      console.error('Failed to load inbox', error);
+    } finally {
+      setInboxLoading(false);
+    }
+  }, []);
+
   const { collections, addCollection } = useCollections(workspace?.id);
   const { views, addView } = useCollectionViews(activeCollection?.id);
 
+  const reportQueueObservability = useCallback(async (payload: {
+    queue_depth: number;
+    replay_processed?: number;
+    replay_failed?: number;
+    source: OfflineQueueMetricsSource;
+  }) => {
+    if (!workspace?.id) return;
+    try {
+      await reportOfflineQueueMetrics({
+        workspace_id: workspace.id,
+        queue_depth: payload.queue_depth,
+        replay_processed: payload.replay_processed,
+        replay_failed: payload.replay_failed,
+        source: payload.source,
+      });
+    } catch (error) {
+      console.warn('Failed to report offline queue observability', error);
+    }
+  }, [workspace?.id]);
+
   const handleAuth = async (authedUser: any) => {
     setUser(authedUser);
+    setOfflineRolloutUserId(authedUser?.id ?? authedUser?.user_id ?? null);
     setLoading(true);
-    try { await loadWorkspace(); } finally { setLoading(false); }
+    try {
+      const pendingInviteToken = sessionStorage.getItem('pending_invite_token');
+      if (pendingInviteToken) {
+        try {
+          await acceptInvite(pendingInviteToken);
+          sessionStorage.removeItem('pending_invite_token');
+        } catch (error) {
+          console.error('Failed to accept invite:', error);
+        }
+      }
+      await loadWorkspace();
+      await refreshInbox('all');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogout = () => {
     clearToken();
+    setOfflineRolloutUserId(null);
     setUser(null); setWorkspace(null); setDocuments([]); setActiveDoc(null);
   };
 
@@ -147,6 +226,135 @@ export default function App() {
       setActiveCollection(null);
     }
   };
+
+  const handleMarkNotificationRead = useCallback(async (notificationId: string) => {
+    try {
+      await markInboxNotificationRead(notificationId);
+      setInboxNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, status: 'read', read_at: new Date().toISOString() } : n));
+      setInboxUnreadCount(prev => Math.max(0, prev - 1));
+    } catch (error) {
+      console.error('Failed to mark notification as read', error);
+    }
+  }, []);
+
+  const handleMarkAllNotificationsRead = useCallback(async () => {
+    try {
+      await markAllInboxNotificationsRead();
+      setInboxNotifications(prev => prev.map(n => ({ ...n, status: 'read', read_at: n.read_at ?? new Date().toISOString() })));
+      setInboxUnreadCount(0);
+    } catch (error) {
+      console.error('Failed to mark all notifications as read', error);
+    }
+  }, []);
+
+  const handleOpenNotification = useCallback(async (notification: InboxNotification) => {
+    if (notification.status === 'unread') {
+      await handleMarkNotificationRead(notification.id);
+    }
+    const documentId = notification.payload?.document_id;
+    const threadId = notification.payload?.thread_id;
+    if (documentId) {
+      const nextDoc = documents.find(d => d.id === documentId);
+      if (nextDoc) {
+        setActiveDoc(nextDoc);
+        setActiveCollection(null);
+      }
+    }
+    if (threadId) {
+      setFocusThreadId(threadId);
+    }
+    setInboxOpen(false);
+  }, [documents, handleMarkNotificationRead]);
+
+  useEffect(() => {
+    if (!user) return;
+    refreshInbox('all');
+  }, [user?.id, workspace?.id, refreshInbox]);
+
+  useEffect(() => {
+    if (!user?.id || !workspace?.id) return;
+    let active = true;
+
+    (async () => {
+      const replayResult = navigator.onLine
+        ? await replayQueuedMutations()
+        : { processed: 0, failed: 0, processed_ids: [], failed_ids: [] };
+      const depth = await getOfflineQueueDepth();
+      if (active) setOfflineQueueDepth(depth);
+      await reportQueueObservability({
+        queue_depth: depth,
+        replay_processed: replayResult.processed,
+        replay_failed: replayResult.failed,
+        source: 'bootstrap',
+      });
+      lastIntervalDepthRef.current = depth;
+    })();
+
+    const unsubscribeQueue = onOfflineQueueChange((depth) => {
+      if (!active) return;
+      setOfflineQueueDepth(depth);
+      if (queueDepthReportTimerRef.current) {
+        window.clearTimeout(queueDepthReportTimerRef.current);
+      }
+      queueDepthReportTimerRef.current = window.setTimeout(() => {
+        if (!active) return;
+        void reportQueueObservability({
+          queue_depth: depth,
+          source: 'queue_changed',
+        });
+        lastIntervalDepthRef.current = depth;
+      }, 1000);
+    });
+
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const replayResult = await replayQueuedMutations();
+      const depth = await getOfflineQueueDepth();
+      if (active) setOfflineQueueDepth(depth);
+      await reportQueueObservability({
+        queue_depth: depth,
+        replay_processed: replayResult.processed,
+        replay_failed: replayResult.failed,
+        source: 'online',
+      });
+      lastIntervalDepthRef.current = depth;
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const interval = window.setInterval(async () => {
+      if (!navigator.onLine) return;
+      const replayResult = await replayQueuedMutations();
+      const depth = await getOfflineQueueDepth();
+      if (active) setOfflineQueueDepth(depth);
+      const depthChanged = lastIntervalDepthRef.current !== depth;
+      const hasReplayResult = (replayResult.processed + replayResult.failed) > 0;
+      if (!depthChanged && !hasReplayResult) return;
+      await reportQueueObservability({
+        queue_depth: depth,
+        replay_processed: replayResult.processed,
+        replay_failed: replayResult.failed,
+        source: 'interval',
+      });
+      lastIntervalDepthRef.current = depth;
+    }, 30000);
+
+    return () => {
+      active = false;
+      if (queueDepthReportTimerRef.current) {
+        window.clearTimeout(queueDepthReportTimerRef.current);
+        queueDepthReportTimerRef.current = null;
+      }
+      unsubscribeQueue();
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.clearInterval(interval);
+    };
+  }, [reportQueueObservability, user?.id, workspace?.id]);
 
   const handleSelectDoc = (doc: any) => {
     setActiveDoc(doc);
@@ -203,6 +411,16 @@ export default function App() {
           onUploaded={handleUploaded}
         />
       )}
+      <InboxPanel
+        open={inboxOpen}
+        loading={inboxLoading}
+        notifications={inboxNotifications}
+        unreadCount={inboxUnreadCount}
+        onClose={() => setInboxOpen(false)}
+        onOpenNotification={handleOpenNotification}
+        onMarkRead={handleMarkNotificationRead}
+        onMarkAllRead={handleMarkAllNotificationsRead}
+      />
 
       {/* Command Bar */}
       <CommandBar
@@ -254,6 +472,11 @@ export default function App() {
                 onUpload={() => setShowUpload(true)}
                 onDeleteDoc={handleDeleteDoc}
                 onRenameDoc={handleRenameDoc}
+                inboxUnreadCount={inboxUnreadCount}
+                onOpenInbox={() => {
+                  setInboxOpen(true);
+                  refreshInbox('all');
+                }}
                 onLogout={handleLogout}
                 onOpenCommand={() => setCmdOpen(true)}
               />
@@ -299,6 +522,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1">
+            <div
+              className="text-[11px] px-2 py-1 rounded-md"
+              style={{
+                background: isOnline ? '#eef9f1' : '#fff4e5',
+                color: isOnline ? '#1e7a3b' : '#b26a00',
+              }}
+            >
+              {isOnline ? 'Online' : 'Offline'} · 待同步 {offlineQueueDepth}
+            </div>
             {!showOnboarding && (
               <button
                 onClick={() => setShowOnboarding(true)}
@@ -338,6 +570,8 @@ export default function App() {
                 doc={activeDoc}
                 workspaceId={workspace?.id}
                 onOpenAI={handleOpenAI}
+                focusThreadId={focusThreadId}
+                onFocusThreadHandled={() => setFocusThreadId(null)}
               />
             )}
           </ErrorBoundary>

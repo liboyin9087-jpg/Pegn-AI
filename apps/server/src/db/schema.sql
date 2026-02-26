@@ -231,6 +231,8 @@ CREATE INDEX IF NOT EXISTS idx_kg_relationships_source ON kg_relationships(sourc
 CREATE INDEX IF NOT EXISTS idx_kg_relationships_target ON kg_relationships(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_kg_relationships_type ON kg_relationships(relation_type);
 CREATE INDEX IF NOT EXISTS idx_kg_relationships_workspace ON kg_relationships(workspace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_kg_relationships_pair
+ON kg_relationships(workspace_id, source_entity_id, target_entity_id, relation_type);
 
 -- ============================================================
 -- Phase 7: RBAC 權限管理系統
@@ -247,6 +249,7 @@ CREATE TABLE IF NOT EXISTS roles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(workspace_id, name)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_global_roles_name ON roles(name) WHERE workspace_id IS NULL;
 
 -- Update workspace_members to support role_id
 -- We keep 'role' for backward compatibility during migration, but will transition to role_id
@@ -264,3 +267,185 @@ INSERT INTO roles (name, description, permissions) VALUES
 
 DROP TRIGGER IF EXISTS update_roles_updated_at ON roles;
 CREATE TRIGGER update_roles_updated_at BEFORE UPDATE ON roles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Phase 2: Workspace Invites
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS workspace_invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
+    token_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'revoked', 'expired')) DEFAULT 'pending',
+    invited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    accepted_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    accepted_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace ON workspace_invites(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites(email);
+CREATE INDEX IF NOT EXISTS idx_workspace_invites_status ON workspace_invites(status);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_workspace_invites_token_hash ON workspace_invites(token_hash);
+DROP TRIGGER IF EXISTS update_workspace_invites_updated_at ON workspace_invites;
+CREATE TRIGGER update_workspace_invites_updated_at BEFORE UPDATE ON workspace_invites FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Phase 2: Supervisor Agent Runs
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL DEFAULT 'supervisor',
+    query TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'auto',
+    status TEXT NOT NULL CHECK (status IN ('running', 'done', 'error', 'aborted')) DEFAULT 'running',
+    result JSONB DEFAULT '{}'::jsonb,
+    error TEXT,
+    token_usage INTEGER DEFAULT 0,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    finished_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    step_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'error', 'aborted')) DEFAULT 'pending',
+    input JSONB DEFAULT '{}'::jsonb,
+    output JSONB DEFAULT '{}'::jsonb,
+    error TEXT,
+    token_usage INTEGER DEFAULT 0,
+    started_at TIMESTAMP WITH TIME ZONE,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(run_id, step_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace ON agent_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_user ON agent_runs(user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_run ON agent_steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_status ON agent_steps(status);
+DROP TRIGGER IF EXISTS update_agent_runs_updated_at ON agent_runs;
+CREATE TRIGGER update_agent_runs_updated_at BEFORE UPDATE ON agent_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_agent_steps_updated_at ON agent_steps;
+CREATE TRIGGER update_agent_steps_updated_at BEFORE UPDATE ON agent_steps FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Phase 2: Comments / Mentions / Inbox
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS comment_threads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('open', 'resolved')) DEFAULT 'open',
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comment_anchors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    thread_id UUID NOT NULL UNIQUE REFERENCES comment_threads(id) ON DELETE CASCADE,
+    block_id TEXT,
+    start_offset INTEGER NOT NULL DEFAULT 0,
+    end_offset INTEGER NOT NULL DEFAULT 0,
+    yjs_relative_start TEXT,
+    yjs_relative_end TEXT,
+    selected_text TEXT,
+    context_before TEXT,
+    context_after TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    thread_id UUID NOT NULL REFERENCES comment_threads(id) ON DELETE CASCADE,
+    parent_comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+    body_markdown TEXT NOT NULL,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    edited_at TIMESTAMP WITH TIME ZONE,
+    deleted_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS inbox_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('mention')),
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL CHECK (status IN ('unread', 'read')) DEFAULT 'unread',
+    read_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS comment_mentions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    comment_id UUID NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+    mentioned_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    notification_id UUID REFERENCES inbox_notifications(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('unread', 'read')) DEFAULT 'unread',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(comment_id, mentioned_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_threads_workspace ON comment_threads(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_comment_threads_document ON comment_threads(document_id);
+CREATE INDEX IF NOT EXISTS idx_comment_threads_status ON comment_threads(status);
+CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id);
+CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments(parent_comment_id);
+CREATE INDEX IF NOT EXISTS idx_comment_mentions_comment ON comment_mentions(comment_id);
+CREATE INDEX IF NOT EXISTS idx_comment_mentions_user ON comment_mentions(mentioned_user_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_notifications_user ON inbox_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_notifications_workspace ON inbox_notifications(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_notifications_status ON inbox_notifications(status);
+DROP TRIGGER IF EXISTS update_comment_threads_updated_at ON comment_threads;
+CREATE TRIGGER update_comment_threads_updated_at BEFORE UPDATE ON comment_threads FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_comment_anchors_updated_at ON comment_anchors;
+CREATE TRIGGER update_comment_anchors_updated_at BEFORE UPDATE ON comment_anchors FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_comments_updated_at ON comments;
+CREATE TRIGGER update_comments_updated_at BEFORE UPDATE ON comments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_comment_mentions_updated_at ON comment_mentions;
+CREATE TRIGGER update_comment_mentions_updated_at BEFORE UPDATE ON comment_mentions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_inbox_notifications_updated_at ON inbox_notifications;
+CREATE TRIGGER update_inbox_notifications_updated_at BEFORE UPDATE ON inbox_notifications FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Phase 2: Idempotency Keys (offline mutation replay)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    operation TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    response JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, workspace_id, operation, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_user_workspace ON api_idempotency_keys(user_id, workspace_id, operation);

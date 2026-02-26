@@ -14,6 +14,7 @@ import { registerKgRoutes } from './routes/kg.js';
 import { registerGraphRAGRoutes } from './routes/graphrag.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
+import { registerKnowledgeRoutes } from './routes/knowledge.js';
 import { createHocuspocusServer } from './sync/hocuspocus.js';
 import { initDb } from './db/client.js';
 import { observability, requestTracker } from './services/observability.js';
@@ -21,6 +22,12 @@ import { snapshotService } from './services/snapshot.js';
 import { generalLimiter, authLimiter, aiLimiter } from './middleware/rateLimit.js';
 import { registerUploadRoutes } from './routes/upload.js';
 import { registerOAuthRoutes } from './routes/oauth.js';
+import { registerCollectionRoutes } from './routes/collections.js';
+import { registerCollectionViewRoutes } from './routes/collection_views.js';
+import { registerInviteRoutes } from './routes/invites.js';
+import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
+import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
+import { recoverRunningRunsOnBoot } from './services/agent.js';
 
 const app = express();
 app.use(cors({
@@ -33,6 +40,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/v1/auth', authLimiter);
 app.use('/api/v1/ai', aiLimiter);
 app.use('/api/v1/graphrag', aiLimiter);
+app.use('/api/v1/knowledge', aiLimiter);
 app.use('/api/v1/agents', aiLimiter);
 app.use('/api/v1/kg/extract', aiLimiter);
 app.use('/api/v1', generalLimiter);
@@ -53,13 +61,15 @@ registerDocumentRoutes(app);
 registerPromptRoutes(app);
 registerKgRoutes(app);
 registerGraphRAGRoutes(app);
+registerKnowledgeRoutes(app);
 registerAgentRoutes(app);
 registerWebhookRoutes(app);
 registerCollectionRoutes(app);
 registerCollectionViewRoutes(app);
-
-import { registerCollectionRoutes } from './routes/collections.js';
-import { registerCollectionViewRoutes } from './routes/collection_views.js';
+registerInviteRoutes(app);
+registerCommentRoutes(app);
+registerInboxRoutes(app);
+registerOfflineObservabilityRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {
@@ -114,6 +124,10 @@ httpServer.listen(apiPort, () => {
 
 // Initialize database
 await initDb();
+const recoveredRuns = await recoverRunningRunsOnBoot();
+if (recoveredRuns > 0) {
+  observability.warn('Recovered running agent runs as aborted', { recoveredRuns });
+}
 
 // Start Hocuspocus sync server
 const syncServer = createHocuspocusServer();

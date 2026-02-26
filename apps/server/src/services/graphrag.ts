@@ -18,7 +18,7 @@ export interface GraphRAGResult {
     score: number;
     type: 'vector' | 'bm25' | 'graph';
   }>;
-  entities: Array<{ name: string; entity_type: string }>;
+  entities: Array<{ id: string; name: string; entity_type: string }>;
   citations: string[];
 }
 
@@ -155,7 +155,7 @@ ${context}
   return {
     answer,
     sources: fused.map(r => ({ content: r.content, document_id: r.document_id, score: r.rrf_score, type: r.type })),
-    entities: entityResults.map(e => ({ name: e.name, entity_type: e.entity_type })),
+    entities: entityResults.map(e => ({ id: e.id, name: e.name, entity_type: e.entity_type })),
     citations
   };
 }

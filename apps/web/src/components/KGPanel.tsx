@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactFlow, {
   Node, Edge, Background, Controls, MiniMap,
   useNodesState, useEdgesState, addEdge,
@@ -6,7 +6,14 @@ import ReactFlow, {
   MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { kgEntities, kgRelationships, kgExtract } from '../api/client';
+import {
+  deleteKgEntity,
+  kgEntities,
+  kgExtract,
+  kgNeighbors,
+  kgRelationships,
+  updateKgEntity,
+} from '../api/client';
 
 const TYPE_COLOR: Record<string, string> = {
   org: '#6366f1',
@@ -125,6 +132,8 @@ export default function KGPanel({
   const [stats, setStats] = useState({ entities: 0, relationships: 0 });
   const [layout, setLayout] = useState<'force' | 'circle'>('force');
   const [neighborMode, setNeighborMode] = useState(false);
+  const [graphSearch, setGraphSearch] = useState('');
+  const [neighborLoading, setNeighborLoading] = useState(false);
 
   const [editingNode, setEditingNode] = useState<any>(null);
 
@@ -132,13 +141,51 @@ export default function KGPanel({
     entities: any[],
     relationships: any[],
     filter: Set<string>,
-    layoutMode: 'force' | 'circle'
+    layoutMode: 'force' | 'circle',
+    searchTerm: string,
+    onlyNeighbors: boolean
   ) => {
-    const filtered = entities.filter(e => filter.has(e.entity_type));
-    const entityIds = new Set(filtered.map((e: any) => e.id));
-    const filteredRels = relationships.filter(
-      (r: any) => entityIds.has(r.source_entity_id) && entityIds.has(r.target_entity_id)
+    const keyword = searchTerm.trim().toLowerCase();
+
+    let filtered = entities.filter(e => filter.has(e.entity_type));
+    let filteredRels = relationships.filter((r: any) =>
+      filtered.some((e: any) => e.id === r.source_entity_id) &&
+      filtered.some((e: any) => e.id === r.target_entity_id)
     );
+
+    if (keyword) {
+      const matchEntityIds = new Set(
+        filtered
+          .filter((e: any) => (`${e.name} ${e.description || ''}`).toLowerCase().includes(keyword))
+          .map((e: any) => e.id)
+      );
+
+      const matchRelationshipIds = filteredRels
+        .filter((r: any) => String(r.relation_type || '').toLowerCase().includes(keyword))
+        .map((r: any) => [r.source_entity_id, r.target_entity_id])
+        .flat();
+
+      for (const id of matchRelationshipIds) matchEntityIds.add(id);
+
+      filtered = filtered.filter((e: any) => matchEntityIds.has(e.id));
+      filteredRels = filteredRels.filter(
+        (r: any) => matchEntityIds.has(r.source_entity_id) && matchEntityIds.has(r.target_entity_id)
+      );
+    }
+
+    if (onlyNeighbors && selectedNode?.id) {
+      const neighborIds = new Set<string>([selectedNode.id]);
+      filteredRels.forEach((r: any) => {
+        if (r.source_entity_id === selectedNode.id || r.target_entity_id === selectedNode.id) {
+          neighborIds.add(r.source_entity_id);
+          neighborIds.add(r.target_entity_id);
+        }
+      });
+      filtered = filtered.filter((e: any) => neighborIds.has(e.id));
+      filteredRels = filteredRels.filter(
+        (r: any) => neighborIds.has(r.source_entity_id) && neighborIds.has(r.target_entity_id)
+      );
+    }
 
     let positions: Map<string, { x: number; y: number }>;
 
@@ -156,12 +203,6 @@ export default function KGPanel({
         });
       });
     }
-
-    // Group by type for visual sizing
-    const typeCounts = filtered.reduce((acc, e) => {
-      acc[e.entity_type] = (acc[e.entity_type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
 
     const newNodes: Node[] = filtered.map((e: any) => {
       const pos = positions.get(e.id) ?? { x: 280, y: 220 };
@@ -229,27 +270,59 @@ export default function KGPanel({
       setAllEntities(entities);
       setAllRelationships(relationships);
       setStats({ entities: entities.length, relationships: relationships.length });
-      buildGraph(entities, relationships, filterTypes, layout);
+      buildGraph(entities, relationships, filterTypes, layout, graphSearch, neighborMode);
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, filterTypes, buildGraph, layout]);
+  }, [workspaceId, filterTypes, buildGraph, layout, graphSearch, neighborMode]);
 
   useEffect(() => { loadGraph(); }, [workspaceId]);
 
-  // Rebuild graph when layout changes
+  // Rebuild graph when filters/layout/search changes
   useEffect(() => {
-    if (allEntities.length > 0) {
-      buildGraph(allEntities, allRelationships, filterTypes, layout);
+    buildGraph(allEntities, allRelationships, filterTypes, layout, graphSearch, neighborMode);
+  }, [allEntities, allRelationships, filterTypes, layout, graphSearch, neighborMode, buildGraph]);
+
+  // Allow Knowledge chat to focus a node in KG panel.
+  useEffect(() => {
+    const saved = localStorage.getItem('kg_focus_entity');
+    if (saved) {
+      try {
+        const payload = JSON.parse(saved);
+        const target = payload?.id
+          ? allEntities.find(e => e.id === payload.id)
+          : allEntities.find(e => String(e.name || '').toLowerCase() === String(payload?.name || '').toLowerCase());
+        if (target) {
+          setSelectedNode(target);
+          setNeighborMode(true);
+          localStorage.removeItem('kg_focus_entity');
+        }
+      } catch {
+        localStorage.removeItem('kg_focus_entity');
+      }
     }
-  }, [layout]);
+
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ id?: string; name?: string }>;
+      const payload = custom.detail || {};
+      const target = payload.id
+        ? allEntities.find(e => e.id === payload.id)
+        : allEntities.find(e => String(e.name || '').toLowerCase() === String(payload.name || '').toLowerCase());
+      if (target) {
+        setSelectedNode(target);
+        setNeighborMode(true);
+      }
+    };
+    window.addEventListener('kg:focus-entity', handler);
+    return () => window.removeEventListener('kg:focus-entity', handler);
+  }, [allEntities]);
 
   const toggleType = (type: string) => {
     setFilterTypes(prev => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
-      buildGraph(allEntities, allRelationships, next, layout);
+      buildGraph(allEntities, allRelationships, next, layout, graphSearch, neighborMode);
       return next;
     });
   };
@@ -289,51 +362,46 @@ export default function KGPanel({
   const handleUpdateNode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingNode) return;
-    // Placeholder for API call to update entity
-    console.log('Updating node:', editingNode);
-    
-    // Optimistic update
-    setAllEntities(prev => prev.map(ent => ent.id === editingNode.id ? editingNode : ent));
-    setSelectedNode(editingNode);
-    setEditingNode(null);
-    // Rebuild graph
-    buildGraph(
-      allEntities.map(ent => ent.id === editingNode.id ? editingNode : ent),
-      allRelationships,
-      filterTypes,
-      layout
-    );
+    try {
+      const res = await updateKgEntity(editingNode.id, {
+        name: editingNode.name,
+        entity_type: editingNode.entity_type,
+        description: editingNode.description ?? '',
+      });
+      setSelectedNode(res.entity);
+      setEditingNode(null);
+      await loadGraph();
+    } catch {
+      alert('更新實體失敗');
+    }
   };
 
   const handleDeleteNode = async () => {
     if (!selectedNode) return;
     if (!confirm(`確定要刪除實體「${selectedNode.name}」嗎？`)) return;
-    
-    // Placeholder for API call to delete entity
-    console.log('Deleting node:', selectedNode.id);
-    
-    // Optimistic update
-    const newEntities = allEntities.filter(ent => ent.id !== selectedNode.id);
-    const newRelationships = allRelationships.filter(
-      r => r.source_entity_id !== selectedNode.id && r.target_entity_id !== selectedNode.id
-    );
-    setAllEntities(newEntities);
-    setAllRelationships(newRelationships);
-    setSelectedNode(null);
-    setEditingNode(null);
-    setStats({ entities: newEntities.length, relationships: newRelationships.length });
-    buildGraph(newEntities, newRelationships, filterTypes, layout);
+    try {
+      await deleteKgEntity(selectedNode.id);
+      setSelectedNode(null);
+      setEditingNode(null);
+      await loadGraph();
+    } catch {
+      alert('刪除實體失敗');
+    }
   };
 
-  // Get neighbors of selected node
-  const neighborIds = selectedNode
-    ? new Set([
-        selectedNode.id,
-        ...allRelationships
-          .filter(r => r.source_entity_id === selectedNode.id || r.target_entity_id === selectedNode.id)
-          .flatMap(r => [r.source_entity_id, r.target_entity_id]),
-      ])
-    : null;
+  const handleLoadNeighbors = async () => {
+    if (!selectedNode) return;
+    setNeighborLoading(true);
+    try {
+      const graph = await kgNeighbors(selectedNode.id);
+      setAllEntities(graph.entities || []);
+      setAllRelationships(graph.relationships || []);
+      setNeighborMode(true);
+      buildGraph(graph.entities || [], graph.relationships || [], filterTypes, layout, graphSearch, true);
+    } finally {
+      setNeighborLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-surface">
@@ -364,6 +432,13 @@ export default function KGPanel({
           </button>
         )}
 
+        <input
+          value={graphSearch}
+          onChange={(e) => setGraphSearch(e.target.value)}
+          placeholder="搜尋實體或關係..."
+          className="w-full bg-surface border border-border rounded-lg px-3 py-1.5 text-xs text-text-primary placeholder-text-tertiary outline-none focus:ring-2 focus:ring-accent"
+        />
+
         {/* 統計 + 佈局控制 */}
         <div className="flex items-center justify-between">
           <span className="text-xs text-text-tertiary">
@@ -371,11 +446,16 @@ export default function KGPanel({
           </span>
           <div className="flex gap-1">
             <button
+              onClick={() => setNeighborMode(v => !v)}
+              className="text-xs text-text-tertiary hover:text-text-secondary px-2 py-0.5 bg-surface-tertiary rounded transition-colors"
+              title="只顯示選中節點與鄰居"
+            >{neighborMode ? '鄰居:開' : '鄰居:關'}</button>
+            <button
               onClick={() => setLayout(l => l === 'force' ? 'circle' : 'force')}
               className="text-xs text-text-tertiary hover:text-text-secondary px-2 py-0.5 bg-surface-tertiary rounded transition-colors"
               title={layout === 'force' ? '切換為環形佈局' : '切換為力導向佈局'}
             >{layout === 'force' ? '⭕ 環形' : '⚡ 力導向'}</button>
-            <button onClick={loadGraph} className="text-xs text-text-tertiary hover:text-text-secondary px-2 py-0.5 bg-surface-tertiary rounded transition-colors">↻</button>
+            <button onClick={loadGraph} className="text-xs text-text-tertiary hover:text-text-secondary px-2 py-0.5 bg-surface-tertiary rounded transition-colors">↻ 全圖</button>
           </div>
         </div>
 
@@ -541,6 +621,13 @@ export default function KGPanel({
                           })
                         }
                       </div>
+                      <button
+                        onClick={handleLoadNeighbors}
+                        disabled={neighborLoading}
+                        className="mt-2 text-xs px-2 py-1 rounded bg-surface-secondary border border-border text-text-secondary hover:text-accent transition-colors disabled:opacity-50"
+                      >
+                        {neighborLoading ? '讀取中...' : '展開 2-hop 鄰居'}
+                      </button>
                       <button
                         onClick={() => setSelectedNode(null)}
                         className="mt-2 text-xs text-text-tertiary hover:text-text-secondary transition-colors"

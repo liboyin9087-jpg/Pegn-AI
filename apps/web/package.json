@@ -28,6 +28,7 @@
     "react-dom": "^19.2.4",
     "reactflow": "^11.11.4",
     "tailwindcss": "^4.2.1",
+    "vite-plugin-pwa": "^0.20.5",
     "yjs": "^13.6.10"
   },
   "devDependencies": {
