@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
 
@@ -39,12 +40,63 @@ export interface PromptRegression {
   created_at: Date;
 }
 
+interface LLMProvider {
+  readonly name: string;
+  generate(prompt: string, input: string): Promise<string>;
+}
+
+class MockLLMProvider implements LLMProvider {
+  readonly name = 'mock';
+
+  async generate(_prompt: string, input: string): Promise<string> {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return `Mock response for: ${input}`;
+  }
+}
+
+class GeminiLLMProvider implements LLMProvider {
+  readonly name = 'gemini';
+  private client: GoogleGenerativeAI;
+  private modelName: string;
+
+  constructor(apiKey: string, modelName: string) {
+    this.client = new GoogleGenerativeAI(apiKey);
+    this.modelName = modelName;
+  }
+
+  async generate(prompt: string, input: string): Promise<string> {
+    const model = this.client.getGenerativeModel({ model: this.modelName });
+    const result = await model.generateContent(`${prompt}\n\nInput:\n${input}`);
+    return result.response.text();
+  }
+}
+
 export class PromptOpsService {
   private prompts: Map<string, Prompt> = new Map();
   private tests: Map<string, PromptTest[]> = new Map();
+  private llmProvider: LLMProvider;
 
   constructor() {
+    this.llmProvider = this.createLLMProvider();
     this.initializeDatabase();
+  }
+
+  private createLLMProvider(): LLMProvider {
+    const preferred = String(process.env.PROMPT_OPS_LLM_PROVIDER ?? 'auto').toLowerCase();
+    const apiKey = process.env.GEMINI_API_KEY;
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+
+    if ((preferred === 'gemini' || preferred === 'auto') && apiKey) {
+      observability.info('PromptOps LLM provider initialized', { provider: 'gemini', modelName });
+      return new GeminiLLMProvider(apiKey, modelName);
+    }
+
+    if (preferred === 'gemini' && !apiKey) {
+      observability.warn('PromptOps provider fallback to mock due to missing GEMINI_API_KEY', { preferred });
+    }
+
+    observability.info('PromptOps LLM provider initialized', { provider: 'mock' });
+    return new MockLLMProvider();
   }
 
   private async initializeDatabase(): Promise<void> {
@@ -337,12 +389,10 @@ export class PromptOpsService {
   }
 
   private async runSingleTest(prompt: Prompt, input: string): Promise<PromptTest> {
-    // This is a mock implementation - in production, you would call the actual LLM
     const startTime = Date.now();
     
     try {
-      // Mock LLM call
-      const actualOutput = await this.mockLLMCall(prompt.content, input);
+      const actualOutput = await this.runLLMCall(prompt.content, input);
       const score = await this.calculateScore(input, actualOutput);
       const passed = score >= 0.7; // 70% threshold
 
@@ -356,7 +406,8 @@ export class PromptOpsService {
         created_at: new Date(),
         metadata: {
           duration: Date.now() - startTime,
-          prompt_version: prompt.version
+          prompt_version: prompt.version,
+          provider: this.llmProvider.name
         }
       };
     } catch (error) {
@@ -374,14 +425,14 @@ export class PromptOpsService {
     }
   }
 
-  private async mockLLMCall(prompt: string, input: string): Promise<string> {
-    // Mock implementation - replace with actual LLM call
-    observability.debug('Mock LLM call', { prompt: prompt.substring(0, 100), input: input.substring(0, 100) });
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    return `Mock response for: ${input}`;
+  private async runLLMCall(prompt: string, input: string): Promise<string> {
+    observability.debug('PromptOps LLM call', {
+      provider: this.llmProvider.name,
+      prompt: prompt.substring(0, 100),
+      input: input.substring(0, 100)
+    });
+
+    return this.llmProvider.generate(prompt, input);
   }
 
   private async calculateScore(input: string, output: string): Promise<number> {
