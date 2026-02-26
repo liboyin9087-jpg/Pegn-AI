@@ -7,13 +7,26 @@ import {
   Sparkles, Share2, MoreHorizontal, Save, Eye, EyeOff,
   Download, CheckCircle2, History, MessageSquare, X, CornerDownLeft,
 } from 'lucide-react';
-import { api } from '../api/client';
+import {
+  listWorkspaceMembers,
+  updateDocumentQueued,
+  listCommentThreads,
+  createCommentThreadQueued,
+  createCommentQueued,
+  resolveCommentThreadQueued,
+  reopenCommentThreadQueued,
+  onOfflineQueueReplay,
+  type CommentAnchor,
+  type CommentThread,
+} from '../api/client';
 import ShareModal from './ShareModal';
 
 interface Props {
   doc: any;
   workspaceId?: string;
   onOpenAI?: (prompt?: string) => void;
+  focusThreadId?: string | null;
+  onFocusThreadHandled?: () => void;
 }
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -42,6 +55,7 @@ interface SelectionPopoverProps {
   selectedText: string;
   onAsk: (prompt: string) => void;
   onInlineAI: (prompt: string, mode: 'inline') => void;
+  onComment: () => void;
   onClose: () => void;
 }
 
@@ -53,7 +67,7 @@ const AI_ACTIONS = [
   { label: '問 AI ›', inline: false, prompt: (t: string) => `關於「${t.slice(0, 60)}」，` },
 ];
 
-function SelectionPopover({ visible, position, selectedText, onAsk, onInlineAI, onClose }: SelectionPopoverProps) {
+function SelectionPopover({ visible, position, selectedText, onAsk, onInlineAI, onComment, onClose }: SelectionPopoverProps) {
   return (
     <AnimatePresence>
       {visible && (
@@ -92,7 +106,7 @@ function SelectionPopover({ visible, position, selectedText, onAsk, onInlineAI, 
           ))}
           <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.15)', flexShrink: 0, margin: '0 4px' }} />
           <button
-            onClick={() => { console.log('comment:', selectedText); onClose(); }}
+            onClick={() => { onComment(); onClose(); }}
             className="px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1"
             style={{ fontSize: 12, color: '#e0e0f0', whiteSpace: 'nowrap' }}
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
@@ -103,6 +117,186 @@ function SelectionPopover({ visible, position, selectedText, onAsk, onInlineAI, 
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+interface WorkspaceMember {
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+function extractMentionToken(text: string, cursor: number) {
+  const prefix = text.slice(0, cursor);
+  const atIndex = prefix.lastIndexOf('@');
+  if (atIndex < 0) return null;
+  if (atIndex > 0 && !/\s/.test(prefix[atIndex - 1])) return null;
+  const token = prefix.slice(atIndex + 1);
+  if (token.includes(' ') || token.includes('\n')) return null;
+  return { start: atIndex, end: cursor, query: token.toLowerCase() };
+}
+
+function countMentions(text: string, members: WorkspaceMember[]): number {
+  const tokens = new Set<string>();
+  const regex = /@([^\s()[\]{}<>]+)/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(text)) !== null) {
+    const token = match[1].replace(/[)\]}>,!?;:]+$/g, '').toLowerCase();
+    if (token) tokens.add(token);
+  }
+  if (tokens.size === 0) return 0;
+  let count = 0;
+  for (const member of members) {
+    const email = member.email.toLowerCase();
+    const name = member.name.toLowerCase();
+    const snake = name.replace(/\s+/g, '_');
+    const local = email.split('@')[0];
+    if ([email, name, snake, local].some((value) => tokens.has(value))) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function MentionInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  members,
+  submitting,
+  buttonLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  placeholder: string;
+  members: WorkspaceMember[];
+  submitting?: boolean;
+  buttonLabel?: string;
+}) {
+  const [mentionState, setMentionState] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const suggestions = mentionState
+    ? members
+        .filter((member) => {
+          if (!mentionState.query) return true;
+          const q = mentionState.query;
+          return (
+            member.name.toLowerCase().includes(q) ||
+            member.email.toLowerCase().includes(q)
+          );
+        })
+        .slice(0, 6)
+    : [];
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [mentionState?.query]);
+
+  const applyMention = (member: WorkspaceMember) => {
+    if (!mentionState) return;
+    const cursor = inputRef.current?.selectionStart ?? mentionState.end;
+    const snakeName = member.name.trim().toLowerCase().replace(/\s+/g, '_');
+    const mentionToken = snakeName || member.email.toLowerCase().split('@')[0];
+    const mentionText = `@${mentionToken} `;
+    const nextValue = value.slice(0, mentionState.start) + mentionText + value.slice(cursor);
+    const nextCursor = mentionState.start + mentionText.length;
+    onChange(nextValue);
+    setMentionState(null);
+    requestAnimationFrame(() => {
+      if (!inputRef.current) return;
+      inputRef.current.focus();
+      inputRef.current.selectionStart = nextCursor;
+      inputRef.current.selectionEnd = nextCursor;
+    });
+  };
+
+  const mentionCount = countMentions(value, members);
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <textarea
+          ref={inputRef}
+          value={value}
+          onChange={(e) => {
+            const nextValue = e.target.value;
+            onChange(nextValue);
+            const token = extractMentionToken(nextValue, e.target.selectionStart);
+            setMentionState(token);
+          }}
+          onKeyDown={(e) => {
+            if (mentionState && suggestions.length > 0) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setActiveIndex((i) => Math.max(i - 1, 0));
+                return;
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const member = suggestions[activeIndex];
+                if (member) applyMention(member);
+                return;
+              }
+              if (e.key === 'Escape') {
+                setMentionState(null);
+                return;
+              }
+            }
+
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder={placeholder}
+          rows={3}
+          className="w-full resize-y bg-surface-secondary border border-border rounded-lg px-3 py-2 text-xs text-text-primary outline-none focus:ring-1 focus:ring-accent"
+        />
+        {mentionState && suggestions.length > 0 && (
+          <div
+            className="absolute left-0 right-0 mt-1 rounded-lg border border-border bg-surface shadow-lg z-20 overflow-hidden"
+          >
+            {suggestions.map((member, idx) => (
+              <button
+                key={member.user_id}
+                onClick={() => applyMention(member)}
+                className="w-full px-3 py-2 text-left text-xs transition-colors"
+                style={{
+                  background: idx === activeIndex ? 'var(--color-accent-light)' : 'transparent',
+                  color: idx === activeIndex ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                }}
+              >
+                <span className="font-medium">{member.name}</span>
+                <span className="ml-2 text-text-tertiary">{member.email}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-text-tertiary">
+          輸入 @ 提及成員
+          {mentionCount > 0 ? ` · 已提及 ${mentionCount} 人` : ''}
+        </span>
+        <button
+          onClick={onSubmit}
+          disabled={submitting || !value.trim()}
+          className="px-2.5 py-1.5 bg-accent text-white text-xs rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-40"
+        >
+          {buttonLabel ?? '送出'}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -368,7 +562,7 @@ function ToolbarDivider() {
 }
 
 // ── Main Editor ─────────────────────────────────────────────────────────────
-export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
+export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFocusThreadHandled }: Props) {
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -394,6 +588,16 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
   const [showHistory, setShowHistory] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [showComments, setShowComments] = useState(false);
+  const [threadsLoading, setThreadsLoading] = useState(false);
+  const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
+  const [threadFilter, setThreadFilter] = useState<'open' | 'resolved' | 'all'>('open');
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [threadComposer, setThreadComposer] = useState<{ selectedText: string; anchor: Partial<CommentAnchor> | null } | null>(null);
+  const [threadBody, setThreadBody] = useState('');
+  const [threadSubmitting, setThreadSubmitting] = useState(false);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replySubmitting, setReplySubmitting] = useState<Record<string, boolean>>({});
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
 
   const ydocRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<HocuspocusProvider | null>(null);
@@ -449,10 +653,15 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
     if (!doc || !workspaceId) return;
     setSaving(true);
     try {
-      await api(`/documents/${doc.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ title: doc.title, content: { text: val ?? contentRef.current } }),
+      const result = await updateDocumentQueued(doc.id, {
+        title: doc.title,
+        content: { text: val ?? contentRef.current },
       });
+      if (result.queued) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2500);
+        return;
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -461,6 +670,208 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
       setSaving(false);
     }
   }, [doc, workspaceId]);
+
+  const loadCommentThreads = useCallback(async (status: 'open' | 'resolved' | 'all' = threadFilter) => {
+    if (!doc?.id) return;
+    setThreadsLoading(true);
+    try {
+      const { threads } = await listCommentThreads(doc.id, status);
+      setCommentThreads(threads.map((thread) => ({ ...thread, sync_status: 'synced' })));
+    } catch (error) {
+      console.error('載入留言失敗', error);
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, [doc?.id, threadFilter]);
+
+  const loadWorkspaceMembers = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const { members } = await listWorkspaceMembers(workspaceId);
+      setWorkspaceMembers(members);
+    } catch (error) {
+      console.error('載入成員失敗', error);
+    }
+  }, [workspaceId]);
+
+  const focusThreadAnchor = useCallback((thread: CommentThread) => {
+    setSelectedThreadId(thread.id);
+    const anchor = thread.anchor;
+    const ta = textareaRef.current;
+    if (!anchor || !ta) return;
+    const start = Number(anchor.start_offset ?? 0);
+    const end = Number(anchor.end_offset ?? start);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    ta.focus();
+    ta.setSelectionRange(start, end);
+    const before = ta.value.slice(0, start);
+    const lineCount = before.split('\n').length;
+    const estimatedLineHeight = 26;
+    ta.scrollTop = Math.max(0, lineCount * estimatedLineHeight - estimatedLineHeight * 3);
+  }, []);
+
+  const openThreadComposerFromSelection = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? start;
+    const selectedText = ta.value.slice(start, end).trim();
+    if (!selectedText) return;
+    const contextBefore = ta.value.slice(Math.max(0, start - 80), start);
+    const contextAfter = ta.value.slice(end, Math.min(ta.value.length, end + 80));
+    setShowComments(true);
+    setThreadComposer({
+      selectedText,
+      anchor: {
+        start_offset: start,
+        end_offset: end,
+        selected_text: selectedText,
+        context_before: contextBefore,
+        context_after: contextAfter,
+      },
+    });
+    setThreadBody('');
+  }, []);
+
+  const handleCreateThread = useCallback(async () => {
+    if (!doc?.id || !threadBody.trim()) return;
+    setThreadSubmitting(true);
+    try {
+      const result = await createCommentThreadQueued(doc.id, {
+        body_markdown: threadBody.trim(),
+        anchor: threadComposer?.anchor ?? undefined,
+      });
+      if (result.queued || !result.data) {
+        const temporaryId = `queued-${result.idempotency_key}`;
+        const optimisticThread: CommentThread = {
+          id: temporaryId,
+          workspace_id: workspaceId ?? '',
+          document_id: doc.id,
+          status: 'open',
+          created_by: 'me',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          anchor: threadComposer?.anchor
+            ? {
+                id: `queued-anchor-${result.idempotency_key}`,
+                thread_id: temporaryId,
+                start_offset: Number(threadComposer.anchor.start_offset ?? 0),
+                end_offset: Number(threadComposer.anchor.end_offset ?? 0),
+                block_id: threadComposer.anchor.block_id ?? null,
+                yjs_relative_start: threadComposer.anchor.yjs_relative_start ?? null,
+                yjs_relative_end: threadComposer.anchor.yjs_relative_end ?? null,
+                selected_text: threadComposer.anchor.selected_text ?? null,
+                context_before: threadComposer.anchor.context_before ?? null,
+                context_after: threadComposer.anchor.context_after ?? null,
+              }
+            : null,
+          comments: [
+            {
+              id: `queued-comment-${result.idempotency_key}`,
+              thread_id: temporaryId,
+              body_markdown: threadBody.trim(),
+              created_by: 'me',
+              created_by_name: '你',
+              created_at: new Date().toISOString(),
+              mention_count: 0,
+            },
+          ],
+          sync_status: 'queued',
+        };
+        setCommentThreads((prev) => [optimisticThread, ...prev]);
+      } else {
+        setCommentThreads((prev) => [{ ...result.data.thread, sync_status: 'synced' }, ...prev]);
+        focusThreadAnchor(result.data.thread);
+      }
+      setThreadBody('');
+      setThreadComposer(null);
+    } catch (error) {
+      console.error('建立留言串失敗', error);
+    } finally {
+      setThreadSubmitting(false);
+    }
+  }, [doc?.id, focusThreadAnchor, threadBody, threadComposer, workspaceId]);
+
+  const handleReplyThread = useCallback(async (threadId: string) => {
+    const body = replyDrafts[threadId]?.trim();
+    if (!body) return;
+    setReplySubmitting((prev) => ({ ...prev, [threadId]: true }));
+    try {
+      const result = await createCommentQueued(threadId, { body_markdown: body });
+      const nextComment = result.queued || !result.data
+        ? {
+            id: `queued-comment-${result.idempotency_key}`,
+            thread_id: threadId,
+            body_markdown: body,
+            created_by: 'me',
+            created_by_name: '你',
+            created_at: new Date().toISOString(),
+            mention_count: 0,
+          }
+        : result.data.comment;
+      setCommentThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? { ...thread, comments: [...thread.comments, nextComment], sync_status: result.queued ? 'queued' : thread.sync_status }
+            : thread
+        )
+      );
+      setReplyDrafts((prev) => ({ ...prev, [threadId]: '' }));
+    } catch (error) {
+      console.error('新增回覆失敗', error);
+    } finally {
+      setReplySubmitting((prev) => ({ ...prev, [threadId]: false }));
+    }
+  }, [replyDrafts]);
+
+  const handleToggleThreadStatus = useCallback(async (thread: CommentThread) => {
+    try {
+      if (thread.status === 'open') {
+        const result = await resolveCommentThreadQueued(thread.id);
+        if (result.queued || !result.data) {
+          setCommentThreads((prev) =>
+            prev.map((item) =>
+              item.id === thread.id
+                ? { ...item, status: 'resolved', resolved_at: new Date().toISOString(), sync_status: 'queued' }
+                : item
+            )
+          );
+        } else {
+          setCommentThreads((prev) =>
+            prev.map((item) =>
+              item.id === thread.id
+                ? { ...item, ...result.data?.thread, sync_status: 'synced' }
+                : item
+            )
+          );
+        }
+      } else {
+        const result = await reopenCommentThreadQueued(thread.id);
+        if (result.queued || !result.data) {
+          setCommentThreads((prev) =>
+            prev.map((item) =>
+              item.id === thread.id
+                ? { ...item, status: 'open', resolved_at: null, sync_status: 'queued' }
+                : item
+            )
+          );
+        } else {
+          setCommentThreads((prev) =>
+            prev.map((item) =>
+              item.id === thread.id
+                ? { ...item, ...result.data?.thread, sync_status: 'synced' }
+                : item
+            )
+          );
+        }
+      }
+      if (threadFilter !== 'all') {
+        await loadCommentThreads(threadFilter);
+      }
+    } catch (error) {
+      console.error('更新留言狀態失敗', error);
+    }
+  }, [loadCommentThreads, threadFilter]);
 
   // Cmd+S
   useEffect(() => {
@@ -471,12 +882,81 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
     return () => window.removeEventListener('keydown', handler);
   }, [handleSave]);
 
+  useEffect(() => {
+    if (!showComments || !doc?.id) return;
+    loadCommentThreads();
+  }, [showComments, doc?.id, threadFilter, loadCommentThreads]);
+
+  useEffect(() => {
+    setThreadComposer(null);
+    setThreadBody('');
+    setCommentThreads([]);
+    setReplyDrafts({});
+    setSelectedThreadId(null);
+  }, [doc?.id]);
+
+  useEffect(() => {
+    if (!showComments || !workspaceId) return;
+    loadWorkspaceMembers();
+  }, [showComments, workspaceId, loadWorkspaceMembers]);
+
+  useEffect(() => {
+    if (!focusThreadId) return;
+    setShowComments(true);
+    setThreadFilter('all');
+    setSelectedThreadId(focusThreadId);
+  }, [focusThreadId]);
+
+  useEffect(() => {
+    if (!focusThreadId || threadsLoading) return;
+    const thread = commentThreads.find((item) => item.id === focusThreadId);
+    if (thread) {
+      focusThreadAnchor(thread);
+    }
+    onFocusThreadHandled?.();
+  }, [commentThreads, focusThreadAnchor, focusThreadId, onFocusThreadHandled, threadsLoading]);
+
+  useEffect(() => {
+    const unsubscribe = onOfflineQueueReplay((result) => {
+      if (result.failed > 0) {
+        setCommentThreads((prev) =>
+          prev.map((thread) =>
+            thread.sync_status === 'queued'
+              ? { ...thread, sync_status: 'failed' }
+              : thread
+          )
+        );
+      }
+      if (result.processed > 0 && showComments) {
+        loadCommentThreads();
+      }
+    });
+    return unsubscribe;
+  }, [loadCommentThreads, showComments]);
+
   // Text selection → AI popover
   const handleSelect = useCallback(() => {
     if (preview) return;
+    const ta = textareaRef.current;
+    if (ta && document.activeElement === ta && ta.selectionStart !== ta.selectionEnd) {
+      const text = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+      if (!text) {
+        setPopover((p) => ({ ...p, visible: false }));
+        return;
+      }
+      const rect = ta.getBoundingClientRect();
+      setPopover({
+        visible: true,
+        x: rect.left + rect.width / 2,
+        y: rect.top + 48,
+        text,
+      });
+      return;
+    }
+
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
-      setPopover(p => ({ ...p, visible: false }));
+      setPopover((p) => ({ ...p, visible: false }));
       return;
     }
     const text = sel.toString().trim();
@@ -705,6 +1185,7 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
           const taRect = ta?.getBoundingClientRect();
           setInlineAI({ visible: true, x: (taRect?.left ?? 100) + 40, y: (taRect?.top ?? 200) + 120, prompt });
         }}
+        onComment={openThreadComposerFromSelection}
         onClose={() => setPopover(p => ({ ...p, visible: false }))}
       />
 
@@ -878,21 +1359,149 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
                 </h3>
                 <button onClick={() => setShowComments(false)} className="text-text-tertiary hover:text-text-primary">✕</button>
               </div>
+              <div className="px-4 py-2 border-b border-border bg-surface-secondary">
+                <div className="flex items-center gap-1">
+                  {(['open', 'resolved', 'all'] as const).map((statusKey) => (
+                    <button
+                      key={statusKey}
+                      onClick={() => setThreadFilter(statusKey)}
+                      className="px-2 py-1 rounded-md text-xs transition-colors"
+                      style={{
+                        background: threadFilter === statusKey ? 'var(--color-accent-light)' : 'transparent',
+                        color: threadFilter === statusKey ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                      }}
+                    >
+                      {statusKey === 'open' ? 'Open' : statusKey === 'resolved' ? 'Resolved' : 'All'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <div className="bg-surface border border-border rounded-xl p-3 shadow-sm">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-accent/10 text-accent flex items-center justify-center text-xs font-medium">A</div>
-                      <span className="text-xs font-medium text-text-primary">AI 助理</span>
+                  {threadComposer ? (
+                    <>
+                      <p className="text-[11px] text-text-tertiary mb-2">錨點文字</p>
+                      <p className="text-xs text-text-primary bg-surface-secondary border border-border rounded-lg px-2 py-1.5">
+                        {threadComposer.selectedText}
+                      </p>
+                      <div className="mt-3">
+                        <MentionInput
+                          value={threadBody}
+                          onChange={setThreadBody}
+                          onSubmit={handleCreateThread}
+                          placeholder="輸入留言內容，支援 @mention"
+                          members={workspaceMembers}
+                          submitting={threadSubmitting}
+                          buttonLabel="建立留言串"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-xs text-text-tertiary leading-relaxed">
+                      先在文件中選取文字，再點擊「留言」建立錨點討論。
                     </div>
-                    <span className="text-[10px] text-text-tertiary">2 小時前</span>
-                  </div>
-                  <p className="text-xs text-text-primary leading-relaxed">在這裡新增留言或討論，支援 @mention 成員</p>
-                  <div className="mt-3 flex gap-2">
-                    <input type="text" placeholder="回覆..." className="flex-1 bg-surface-secondary border border-border rounded-lg px-2 py-1 text-xs text-text-primary outline-none focus:ring-1 focus:ring-accent" />
-                    <button className="px-2 py-1 bg-accent text-white text-xs rounded-lg hover:bg-accent-hover transition-colors">送出</button>
-                  </div>
+                  )}
                 </div>
+
+                {threadsLoading ? (
+                  <div className="text-xs text-text-tertiary">載入留言中...</div>
+                ) : commentThreads.length === 0 ? (
+                  <div className="text-xs text-text-tertiary">目前沒有留言串</div>
+                ) : (
+                  commentThreads.map((thread) => (
+                    <div
+                      key={thread.id}
+                      className="bg-surface border rounded-xl p-3 shadow-sm"
+                      style={{
+                        borderColor: selectedThreadId === thread.id ? 'var(--color-accent)' : 'var(--color-border)',
+                        background: selectedThreadId === thread.id ? 'var(--color-accent-light)' : 'var(--color-surface)',
+                      }}
+                    >
+                      <button onClick={() => focusThreadAnchor(thread)} className="w-full text-left">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-text-primary truncate">
+                            {thread.anchor?.selected_text || '未命名留言串'}
+                          </p>
+                          <div className="flex items-center gap-1">
+                            {thread.sync_status === 'queued' && (
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded-full border"
+                                style={{ color: 'var(--color-warning)', borderColor: 'var(--color-warning)' }}
+                              >
+                                Queued
+                              </span>
+                            )}
+                            {thread.sync_status === 'failed' && (
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded-full border"
+                                style={{ color: 'var(--color-error)', borderColor: 'var(--color-error)' }}
+                              >
+                                Failed
+                              </span>
+                            )}
+                            <span
+                              className="text-[10px] px-1.5 py-0.5 rounded-full border"
+                              style={{
+                                color: thread.status === 'resolved' ? 'var(--color-success)' : 'var(--color-warning)',
+                                borderColor: thread.status === 'resolved' ? 'var(--color-success)' : 'var(--color-warning)',
+                              }}
+                            >
+                              {thread.status === 'resolved' ? 'Resolved' : 'Open'}
+                            </span>
+                          </div>
+                        </div>
+                        {thread.anchor?.context_before || thread.anchor?.context_after ? (
+                          <p className="mt-1 text-[11px] text-text-tertiary">
+                            ...{thread.anchor?.context_before || ''}
+                            <span className="text-text-secondary font-medium">{thread.anchor?.selected_text || ''}</span>
+                            {thread.anchor?.context_after || ''}...
+                          </p>
+                        ) : null}
+                      </button>
+
+                      <div className="mt-2 space-y-2">
+                        {thread.comments.map((comment) => (
+                          <div key={comment.id} className="bg-surface-secondary border border-border rounded-lg px-2 py-1.5">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-[11px] font-medium text-text-primary">
+                                {comment.created_by_name || '成員'}
+                              </span>
+                              <span className="text-[10px] text-text-tertiary">
+                                {new Date(comment.created_at).toLocaleString('zh-TW', { hour: '2-digit', minute: '2-digit', month: '2-digit', day: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-xs text-text-primary whitespace-pre-wrap">{comment.body_markdown}</p>
+                            {(comment.mention_count ?? 0) > 0 && (
+                              <p className="mt-1 text-[10px] text-accent">提及 {comment.mention_count} 人</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="mt-2">
+                        <MentionInput
+                          value={replyDrafts[thread.id] ?? ''}
+                          onChange={(value) => setReplyDrafts((prev) => ({ ...prev, [thread.id]: value }))}
+                          onSubmit={() => handleReplyThread(thread.id)}
+                          placeholder="回覆留言，支援 @mention"
+                          members={workspaceMembers}
+                          submitting={replySubmitting[thread.id]}
+                          buttonLabel="回覆"
+                        />
+                      </div>
+
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          onClick={() => handleToggleThreadStatus(thread)}
+                          className="text-[11px] px-2 py-1 rounded-md border border-border text-text-secondary hover:bg-surface-secondary"
+                        >
+                          {thread.status === 'open' ? 'Resolve' : 'Reopen'}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </motion.div>
           )}
@@ -945,7 +1554,12 @@ export default function Editor({ doc, workspaceId, onOpenAI }: Props) {
       </AnimatePresence>
 
       {/* Share Modal */}
-      <ShareModal isOpen={showShare} onClose={() => setShowShare(false)} workspaceName="目前工作區" />
+      <ShareModal
+        isOpen={showShare}
+        onClose={() => setShowShare(false)}
+        workspaceId={workspaceId}
+        workspaceName="目前工作區"
+      />
     </motion.div>
   );
 }

@@ -33,7 +33,8 @@ export async function initDefaultRoles(): Promise<void> {
       permissions: JSON.stringify([
         'workspace:admin',
         'collection:create', 'collection:edit', 'collection:delete', 'collection:view',
-        'document:create', 'document:edit', 'document:delete', 'document:view'
+        'document:create', 'document:edit', 'document:delete', 'document:view',
+        'comment:view', 'comment:create', 'comment:resolve'
       ])
     },
     {
@@ -41,13 +42,14 @@ export async function initDefaultRoles(): Promise<void> {
       description: 'Can create and edit content',
       permissions: JSON.stringify([
         'collection:create', 'collection:edit', 'collection:view',
-        'document:create', 'document:edit', 'document:view'
+        'document:create', 'document:edit', 'document:view',
+        'comment:view', 'comment:create', 'comment:resolve'
       ])
     },
     {
       name: 'viewer',
       description: 'Read-only access',
-      permissions: JSON.stringify(['collection:view', 'document:view'])
+      permissions: JSON.stringify(['collection:view', 'document:view', 'comment:view', 'comment:create'])
     }
   ];
 
@@ -56,7 +58,8 @@ export async function initDefaultRoles(): Promise<void> {
       await pool.query(`
         INSERT INTO roles (workspace_id, name, description, permissions)
         VALUES (NULL, $1, $2, $3)
-        ON CONFLICT (workspace_id, name) WHERE workspace_id IS NULL DO NOTHING
+        ON CONFLICT (workspace_id, name) WHERE workspace_id IS NULL
+        DO UPDATE SET description = EXCLUDED.description, permissions = EXCLUDED.permissions
       `, [role.name, role.description, role.permissions]);
     }
     console.log('[migrations] Default system roles initialized');

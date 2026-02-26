@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { startResearchAgent, startSummarizeAgent, getToken, api } from '../api/client';
+import { startResearchAgent, startSummarizeAgent, startSupervisorAgent, getToken, api } from '../api/client';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-text-tertiary',
@@ -48,7 +48,6 @@ export default function AgentPanel({
   const [saved, setSaved] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const abortRef = useRef<(() => void) | null>(null);
-  const streamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleStart = useCallback(async () => {
     if (!input.trim() || !workspaceId || loading) return;
@@ -59,16 +58,16 @@ export default function AgentPanel({
 
     // Abort previous SSE
     abortRef.current?.();
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
 
     try {
       // Start the agent job
       let res: any;
       if (mode === 'research') {
         res = await startResearchAgent(input, workspaceId);
-      } else {
-        // summarize/brainstorm/outline use summarize endpoint for now
+      } else if (mode === 'summarize') {
         res = await startSummarizeAgent(input, workspaceId);
+      } else {
+        res = await startSupervisorAgent(input, workspaceId, 'auto');
       }
 
       const runId = res.run_id;
@@ -97,23 +96,13 @@ export default function AgentPanel({
               }
               return { ...prev, steps: newSteps };
             });
+          } else if (data.type === 'token') {
+            setStreamingAnswer(prev => prev + (data.token || ''));
           } else if (data.type === 'run') {
             const completedRun = data.run;
             setRun(completedRun);
-
-            // Simulate streaming for the final answer display
-            const answer = completedRun.result?.answer;
-            if (answer) {
-              setStreamingAnswer('');
-              let i = 0;
-              streamIntervalRef.current = setInterval(() => {
-                i += 4;
-                setStreamingAnswer(answer.slice(0, i));
-                if (i >= answer.length) {
-                  clearInterval(streamIntervalRef.current!);
-                  setStreamingAnswer(answer);
-                }
-              }, 12);
+            if (!streamingAnswer && completedRun.result?.answer) {
+              setStreamingAnswer(completedRun.result.answer);
             }
           }
         } catch {}
@@ -139,7 +128,6 @@ export default function AgentPanel({
   const handleStop = () => {
     abortRef.current?.();
     abortRef.current = null;
-    if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
     setLoading(false);
     setRun(prev => prev ? { ...prev, status: 'error' } : null);
   };

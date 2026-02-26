@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText, Plus, MoreHorizontal, Edit2, Trash2, Upload,
-  LogOut, Search, ChevronRight, FilePlus, Database, LayoutGrid
+  LogOut, Search, ChevronRight, FilePlus, Database, LayoutGrid, Bell
 } from 'lucide-react';
 import { Collection } from '../types/collection';
 
@@ -27,6 +27,8 @@ interface Props {
   onUpload: () => void;
   onDeleteDoc: (id: string) => void;
   onRenameDoc: (id: string, title: string) => void;
+  inboxUnreadCount?: number;
+  onOpenInbox?: () => void;
   onLogout: () => void;
   onClose?: () => void;
   onOpenCommand?: () => void;
@@ -261,7 +263,8 @@ function MenuButton({
 // ── Main Sidebar ───────────────────────────────────────────────────────────
 export default function Sidebar({
   workspace, documents, collections = [], activeDoc, activeCollection, user,
-  onSelectDoc, onSelectCollection, onNewDoc, onNewCollection, onUpload, onDeleteDoc, onRenameDoc, onLogout,
+  onSelectDoc, onSelectCollection, onNewDoc, onNewCollection, onUpload, onDeleteDoc, onRenameDoc,
+  inboxUnreadCount = 0, onOpenInbox, onLogout,
   onClose, onOpenCommand,
 }: Props) {
   const [menuDocId, setMenuDocId] = useState<string | null>(null);
@@ -363,6 +366,35 @@ export default function Sidebar({
               lineHeight: '14px',
             }}
           >⌘K</kbd>
+        </button>
+
+        <button
+          onClick={() => { onOpenInbox?.(); onClose?.(); }}
+          className="mt-2 w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-secondary)',
+            fontSize: 12.5,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border-strong)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--color-border)'; }}
+        >
+          <Bell size={12} style={{ color: 'var(--color-text-tertiary)' }} />
+          <span className="flex-1">Inbox</span>
+          <span
+            className="px-1.5 py-0.5 rounded-full"
+            style={{
+              fontSize: 10,
+              background: inboxUnreadCount > 0 ? 'var(--color-accent-light)' : 'var(--color-surface-tertiary)',
+              color: inboxUnreadCount > 0 ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              minWidth: 18,
+              textAlign: 'center',
+              lineHeight: '12px',
+            }}
+          >
+            {inboxUnreadCount}
+          </span>
         </button>
       </div>
 

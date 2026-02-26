@@ -6,6 +6,7 @@ import { observability } from '../services/observability.js';
 
 interface SearchRequest {
   query: string;
+  workspace_id?: string;
   workspaceId?: string;
   limit?: number;
   offset?: number;
@@ -25,6 +26,7 @@ export function registerSearchRoutes(app: Express): void {
 
     try {
       const searchRequest: SearchRequest = req.body;
+      const workspaceId = searchRequest.workspace_id || searchRequest.workspaceId;
 
       if (!searchRequest.query || typeof searchRequest.query !== 'string') {
         res.status(400).json({ error: 'Query is required and must be a string' });
@@ -34,7 +36,7 @@ export function registerSearchRoutes(app: Express): void {
       // Dates are passed as strings to the search service
       const results = await searchService.search({
         query: searchRequest.query,
-        workspaceId: searchRequest.workspaceId,
+        workspaceId,
         limit: searchRequest.limit || 20,
         offset: searchRequest.offset || 0,
         filters: searchRequest.filters,
@@ -71,7 +73,10 @@ export function registerSearchRoutes(app: Express): void {
   // Search suggestions endpoint
   app.get('/api/v1/search/suggestions', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     try {
-      const { q: query, workspaceId, limit = 5 } = req.query;
+      const { q: query, workspace_id, workspaceId, limit = 5 } = req.query;
+      const resolvedWorkspaceId =
+        (typeof workspace_id === 'string' ? workspace_id : undefined) ||
+        (typeof workspaceId === 'string' ? workspaceId : undefined);
 
       if (!query || typeof query !== 'string') {
         res.status(400).json({ error: 'Query parameter "q" is required' });
@@ -80,7 +85,7 @@ export function registerSearchRoutes(app: Express): void {
 
       const suggestions = await searchService.getSuggestions(
         query,
-        workspaceId as string,
+        resolvedWorkspaceId as string,
         parseInt(limit as string)
       );
 
@@ -127,6 +132,7 @@ export function registerSearchRoutes(app: Express): void {
     try {
       const {
         query,
+        workspace_id,
         workspaceId,
         filters = {},
         limit = 20,
@@ -134,6 +140,8 @@ export function registerSearchRoutes(app: Express): void {
         sortBy = 'relevance',
         sortOrder = 'desc'
       } = req.body;
+
+      const resolvedWorkspaceId = workspace_id || workspaceId;
 
       if (!query) {
         res.status(400).json({ error: 'Query is required' });
@@ -143,7 +151,7 @@ export function registerSearchRoutes(app: Express): void {
       // Enhanced search with additional options
       const searchOptions = {
         query,
-        workspaceId,
+        workspaceId: resolvedWorkspaceId,
         limit,
         offset,
         filters: {
