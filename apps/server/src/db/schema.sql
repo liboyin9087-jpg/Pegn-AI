@@ -469,3 +469,39 @@ CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_workspace ON webhook_subscr
 CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_user ON webhook_subscriptions(user_id);
 DROP TRIGGER IF EXISTS update_webhook_subscriptions_updated_at ON webhook_subscriptions;
 CREATE TRIGGER update_webhook_subscriptions_updated_at BEFORE UPDATE ON webhook_subscriptions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Phase 2: Billing & Quota
+-- ============================================================
+
+-- Per-workspace quota limits (tokens/month, AI calls/day, etc.)
+CREATE TABLE IF NOT EXISTS quota_limits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL UNIQUE REFERENCES workspaces(id) ON DELETE CASCADE,
+    plan TEXT NOT NULL DEFAULT 'free',              -- free | pro | enterprise
+    ai_tokens_per_month INTEGER NOT NULL DEFAULT 100000,
+    ai_calls_per_day INTEGER NOT NULL DEFAULT 200,
+    agent_runs_per_day INTEGER NOT NULL DEFAULT 20,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Usage records keyed by (workspace, resource_type, period)
+CREATE TABLE IF NOT EXISTS usage_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    resource_type TEXT NOT NULL,   -- ai_tokens | ai_calls | agent_runs
+    period TEXT NOT NULL,          -- YYYY-MM-DD (day) or YYYY-MM (month)
+    amount INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(workspace_id, resource_type, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quota_limits_workspace ON quota_limits(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_usage_records_workspace_period ON usage_records(workspace_id, resource_type, period);
+DROP TRIGGER IF EXISTS update_quota_limits_updated_at ON quota_limits;
+CREATE TRIGGER update_quota_limits_updated_at BEFORE UPDATE ON quota_limits FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
+CREATE TRIGGER update_usage_records_updated_at BEFORE UPDATE ON usage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

@@ -69,11 +69,11 @@ export function subscribeToRun(runId: string, cb: (event: AgentEvent) => void): 
   };
 }
 
+// Fixed orchestration steps — worker steps are created dynamically after planning
 const STEP_TEMPLATES = [
-  { step_key: 'planner', name: '規劃任務', worker: 'planner', position: 1 },
-  { step_key: 'retriever', name: '檢索證據', worker: 'retriever', position: 2 },
-  { step_key: 'analyst', name: '分析整合', worker: 'analyst', position: 3 },
-  { step_key: 'writer', name: '產出結果', worker: 'writer', position: 4 },
+  { step_key: 'planner',  name: '規劃任務', worker: 'planner',  position: 1  },
+  { step_key: 'analyst',  name: '分析整合', worker: 'analyst',  position: 30 },
+  { step_key: 'writer',   name: '產出結果', worker: 'writer',   position: 40 },
 ] as const;
 
 function approxTokenUsage(content: unknown): number {
@@ -373,6 +373,17 @@ async function writerWorker(
   }
 }
 
+async function insertWorkerStep(runId: string, stepKey: string, name: string, position: number): Promise<void> {
+  const p = pool;
+  if (!p) return;
+  await p.query(
+    `INSERT INTO agent_steps (run_id, step_key, name, worker, position, status)
+     VALUES ($1, $2, $3, 'retriever_worker', $4, 'pending')
+     ON CONFLICT (run_id, step_key) DO NOTHING`,
+    [runId, stepKey, name, position]
+  );
+}
+
 async function runSupervisorPipeline(
   runId: string,
   query: string,
@@ -382,31 +393,64 @@ async function runSupervisorPipeline(
 ): Promise<void> {
   emitEvent(runId, { type: 'meta', run_id: runId, mode });
 
+  // ── 1. Planner (position 1) ────────────────────────────────
   const planned = await runStep(runId, 'planner', { query, template }, async ({ query: q }) => {
     return plannerWorker(q, template);
   });
 
-  const retrieved = await runStep(runId, 'retriever', { tasks: planned.tasks, mode, workspace_id: workspaceId }, async ({ tasks }) => {
-    const taskResults = [] as any[];
-    for (const task of tasks) {
-      const result = await retrieveForTask(task, workspaceId, mode);
-      taskResults.push({ task, ...result });
-    }
-    return taskResults;
-  });
+  // ── 2. Parallel worker agents (positions 10, 11, 12…) ──────
+  // Insert a DB step for each task so the UI can track per-task progress
+  await Promise.all(planned.tasks.map((task, i) =>
+    insertWorkerStep(runId, `worker_${i + 1}`, `Worker ${i + 1}: ${task.slice(0, 40)}`, 10 + i)
+  ));
 
+  // Run all retrieval workers concurrently
+  const workerSettled = await Promise.allSettled(
+    planned.tasks.map(async (task, i) => {
+      const stepKey = `worker_${i + 1}`;
+      await updateStep(runId, stepKey, { status: 'running', input: { task, mode }, started_at: new Date().toISOString() });
+      try {
+        const result = await retrieveForTask(task, workspaceId, mode);
+        const workerResult = { task, ...result };
+        await updateStep(runId, stepKey, {
+          status: 'done',
+          output: workerResult,
+          token_usage: approxTokenUsage(workerResult),
+          finished_at: new Date().toISOString(),
+        });
+        return workerResult;
+      } catch (err) {
+        await updateStep(runId, stepKey, {
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Worker failed',
+          finished_at: new Date().toISOString(),
+        });
+        throw err;
+      }
+    })
+  );
+
+  // Collect successful worker results (partial results still feed the analyst)
+  const retrieved = workerSettled
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+    .map(r => r.value);
+
+  const failedWorkers = workerSettled.filter(r => r.status === 'rejected').length;
+  if (failedWorkers > 0) {
+    observability.warn('Some worker agents failed', { runId, failed: failedWorkers, total: planned.tasks.length });
+  }
+
+  // ── 3. Analyst (position 30) ───────────────────────────────
   const analysis = await runStep(runId, 'analyst', { query, retrieved }, async ({ query: q, retrieved: r }) => {
     return analystWorker(r, q);
   });
 
-  // Writer step 使用真實串流：token 在 LLM 生成過程中即時透過 SSE 推送給前端
+  // ── 4. Writer (position 40) — real LLM streaming ──────────
   const finalResult = await runStep(runId, 'writer', { query, analysis, template }, async ({ query: q, analysis: a }) => {
     return writerWorker(q, a, template, (token) => {
       emitEvent(runId, { type: 'token', token });
     });
   });
-
-  const answerText = finalResult.answer ?? '';
 
   await markRun(runId, 'done', {
     result: {
@@ -416,7 +460,7 @@ async function runSupervisorPipeline(
       tasks: planned.tasks,
       retrieved,
     },
-    token_usage: approxTokenUsage(answerText),
+    token_usage: approxTokenUsage(finalResult.answer ?? ''),
   });
 
   emitEvent(runId, { type: 'done' });
