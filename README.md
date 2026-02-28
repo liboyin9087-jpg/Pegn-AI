@@ -1,8 +1,10 @@
 # Pegn-AI — AI-Native Work OS
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Phase-2_Complete-22c55e?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Phase-3_Complete-22c55e?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Stack-React_19_|_Node.js_|_PostgreSQL_|_Gemini-2383e2?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Deploy-Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" />
   <img src="https://img.shields.io/badge/License-MIT-6366f1?style=for-the-badge" />
 </p>
 
@@ -95,7 +97,9 @@
 | **認證** | JWT、Passport.js（Google OAuth、GitHub OAuth）|
 | **檔案處理** | Multer（上傳）、pdf-parse（PDF 解析）|
 | **測試** | Vitest、React Testing Library |
-| **容器化** | Docker Compose |
+| **容器化** | Docker + Docker Compose（多階段建構）|
+| **Web 伺服器** | nginx:alpine（SPA routing + API proxy）|
+| **CI/CD** | GitHub Actions（typecheck + test + build + docker-build）|
 
 ---
 
@@ -103,111 +107,107 @@
 
 ### 環境需求
 
-- **Node.js** 18.0+
-- **Docker** & Docker Compose
+- **Docker** & Docker Compose（生產 / 一鍵部署）
+- **Node.js** 20.0+（本地開發用）
 - **Google Gemini API Key**（AI 功能必須）
 
-### 1. 克隆並安裝依賴
+### 方式 A：Docker 一鍵部署（推薦）
 
 ```bash
+# 1. 克隆專案
+git clone https://github.com/liboyin9087-jpg/Pegn-AI.git
+cd Pegn-AI
+
+# 2. 複製環境變數範本並填入必要值
+cp .env.example .env
+# 編輯 .env，至少設定：
+#   JWT_SECRET=<隨機 32+ 字元字串>
+#   GEMINI_API_KEY=<你的 Gemini API Key>
+
+# 3. 一鍵啟動完整 stack
+docker-compose up --build
+```
+
+啟動後自動健康檢查串接依賴，所有服務 healthy 後可存取：
+- **前端**：http://localhost:80
+- **API**：http://localhost:4000
+- **WebSocket**：ws://localhost:1234
+
+> 資料庫 Schema 在 API 首次啟動時自動初始化，含預設角色（admin / editor / viewer）。
+
+---
+
+### 方式 B：本地開發模式
+
+```bash
+# 1. 克隆並安裝依賴
 git clone https://github.com/liboyin9087-jpg/Pegn-AI.git
 cd Pegn-AI
 npm install
-```
 
-### 2. 設定環境變數
+# 2. 設定環境變數（本地開發）
+cp .env.example .env
+# 填入 JWT_SECRET 與 GEMINI_API_KEY
 
-```bash
-cp apps/server/.env.example apps/server/.env
-```
+# 3. 僅啟動資料庫基礎設施
+docker-compose up -d postgres redis
 
-編輯 `apps/server/.env`，至少填入：
-
-```env
-GEMINI_API_KEY=your-gemini-api-key-here
-JWT_SECRET=your-strong-random-secret-here
-```
-
-### 3. 啟動基礎設施
-
-```bash
-docker compose up -d
-```
-
-啟動後會有：
-- PostgreSQL（含 pgvector 擴充）在 `localhost:5432`
-- Redis 在 `localhost:6379`
-
-### 4. 啟動開發伺服器
-
-```bash
+# 4. 啟動開發伺服器（前後端 hot reload）
 npm run dev
 ```
-
-資料庫 Schema 會在伺服器首次啟動時自動初始化，並建立預設系統角色（admin / editor / viewer）。
 
 ---
 
 ## 服務一覽
 
+### Docker 部署模式（`docker-compose up --build`）
+
+| 服務 | 網址 | 說明 |
+|------|------|------|
+| 前端 Web | http://localhost:80 | nginx + React SPA |
+| API 伺服器 | http://localhost:4000 | Express + Node.js |
+| WebSocket 同步 | ws://localhost:1234 | Hocuspocus CRDT |
+| Prometheus 指標 | http://localhost:4000/metrics | 監控匯出 |
+| 健康詳情 | http://localhost:4000/health/detailed | DB + 記憶體狀態 |
+| 管理日誌 | http://localhost:4000/admin/logs | 需認證 |
+
+### 本地開發模式（`npm run dev`）
+
 | 服務 | 網址 |
 |------|------|
-| 前端應用 | http://localhost:5177 |
+| 前端（Vite HMR） | http://localhost:5177 |
 | API 伺服器 | http://localhost:4000 |
 | WebSocket 同步 | ws://localhost:1234 |
-| Prometheus 指標 | http://localhost:4000/metrics |
-| 健康詳情 | http://localhost:4000/health/detailed |
-| 管理日誌 | http://localhost:4000/admin/logs（需認證）|
 
 ---
 
 ## 環境變數
 
-### `apps/server/.env`
+複製 `.env.example` 為 `.env` 並填入實際值：
 
-```env
-# ── 伺服器 ──────────────────────────────────────────────────
-API_PORT=4000
-SYNC_PORT=1234
-
-# ── 資料庫 ──────────────────────────────────────────────────
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/ai_native
-
-# ── 認證 ────────────────────────────────────────────────────
-JWT_SECRET=change-me-in-production          # 生產環境必須替換
-JWT_EXPIRES_IN=7d
-
-# ── AI 模型 ─────────────────────────────────────────────────
-GEMINI_API_KEY=                              # 必填
-GEMINI_MODEL=gemini-2.5-flash
-PROMPT_OPS_LLM_PROVIDER=auto                # auto | gemini | mock
-
-# ── 前端 URL ────────────────────────────────────────────────
-FRONTEND_URL=http://localhost:5177
-PUBLIC_URL=http://localhost:4000
-CORS_ORIGIN=http://localhost:5177
-
-# ── OAuth（選填）─────────────────────────────────────────────
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-
-# ── Feature Flags ────────────────────────────────────────────
-INVITES_V1=true
-SUPERVISOR_V1=true
-KNOWLEDGE_ROUTER_V1=true
-COMMENTS_V1=true
-PWA_OFFLINE_V1=true
+```bash
+cp .env.example .env
 ```
 
-### `apps/web/.env`
+### 必填項目
 
-```env
-VITE_API_URL=http://localhost:4000
-VITE_SYNC_URL=ws://localhost:1234
-VITE_PWA_OFFLINE_V1=true
-```
+| 變數 | 說明 |
+|------|------|
+| `JWT_SECRET` | JWT 簽署密鑰，生產環境必須設為隨機 32+ 字元字串 |
+| `GEMINI_API_KEY` | Google Gemini API Key（AI 全功能依賴）|
+| `DATABASE_URL` | PostgreSQL 連線字串 |
+
+### Docker 部署 vs 本地開發差異
+
+| 變數 | Docker 模式 | 本地開發模式 |
+|------|------------|-------------|
+| `DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/ai_native`（自動注入）| `postgresql://postgres:postgres@localhost:5432/ai_native` |
+| `CORS_ORIGIN` | `http://localhost:80` | `http://localhost:5177` |
+| `FRONTEND_URL` | `http://localhost:80` | `http://localhost:5177` |
+
+> Docker Compose 會自動覆蓋 `DATABASE_URL` 與 `REDIS_URL` 為容器內部網路地址，其他值從 `.env` 讀取。
+
+完整變數說明請參閱 [`.env.example`](.env.example)。
 
 ---
 
@@ -446,8 +446,9 @@ Pegn-AI/
 │       │   └── App.tsx             # 根元件（路由、狀態、在線/離線邏輯）
 │       └── vite.config.ts          # Vite + VitePWA（Workbox）+ Vitest
 │
-├── docker-compose.yml              # PostgreSQL 16（pgvector）+ Redis 7
-├── package.json                    # Monorepo 工作區設定
+├── docker-compose.yml              # 完整 4 服務 stack：postgres + redis + api + web
+├── .env.example                    # 環境變數範本（cp .env.example .env）
+├── package.json                    # Monorepo 工作區設定（含 typecheck + test scripts）
 └── docs/                           # 設計文件與缺口分析
 ```
 
@@ -514,24 +515,54 @@ auto / hybrid / graph         Promise.allSettled（並行）
 ### 執行測試
 
 ```bash
-# 後端單元測試
-cd apps/server && npm test
+# 從根目錄執行全部測試
+npm run test
 
-# 前端測試
-cd apps/web && npm test
+# 個別執行
+cd apps/server && npm test        # 後端單元測試
+cd apps/web && npm run test -- --run  # 前端測試
+cd apps/web && npm run test:coverage  # 覆蓋率報告
+```
 
-# 前端覆蓋率報告
-cd apps/web && npm run test:coverage
+### Type 檢查
+
+```bash
+# 從根目錄同時檢查前後端
+npm run typecheck
+
+# 個別執行
+cd apps/server && npm run typecheck
+cd apps/web && npm run typecheck
 ```
 
 ### 建置生產版本
 
 ```bash
-# 前端（輸出至 apps/web/dist/）
-cd apps/web && npm run build
+# 從根目錄建置所有 package
+npm run build
 
-# 後端（tsx 直接執行，無需額外編譯）
-cd apps/server && NODE_ENV=production npm start
+# Docker 建置（確認 image 可正常建構）
+docker build -t pegn-api ./apps/server
+docker build -t pegn-web ./apps/web
+```
+
+### Docker 容器化部署
+
+```bash
+# 一鍵啟動完整 stack（含建置）
+docker-compose up --build
+
+# 背景執行
+docker-compose up --build -d
+
+# 查看各服務狀態與健康
+docker-compose ps
+
+# 查看 API 日誌
+docker-compose logs -f api
+
+# 停止
+docker-compose down
 ```
 
 ### Webhook 事件類型
@@ -546,8 +577,9 @@ agent.completed     workspace.member_added
 
 ## Roadmap
 
-### 已完成（Phase 1 + Phase 2）
+### 已完成（Phase 1 + Phase 2 + Phase 3）
 
+#### Phase 1 — 核心功能
 - [x] BlockSuite 塊狀編輯器 + Yjs 即時協作（< 500ms 延遲）
 - [x] 混合搜尋（BM25 + pgvector RRF 融合）
 - [x] GraphRAG 知識問答（含引用來源）
@@ -560,6 +592,8 @@ agent.completed     workspace.member_added
 - [x] Google / GitHub OAuth（URL hash fragment 安全傳遞）
 - [x] WebSocket 認證（JWT + DB 工作區成員驗證）
 - [x] Webhook DB 持久化（重啟不遺失）
+
+#### Phase 2 — 強化與基礎設施
 - [x] Billing & Quota 基礎架構（月/日週期，HTTP 429 執行）
 - [x] PWA + Service Worker（Workbox）+ IndexedDB 離線佇列
 - [x] Prompt 版本控制 + LLMProvider 抽象層（Gemini / Mock 切換）
@@ -567,15 +601,23 @@ agent.completed     workspace.member_added
 - [x] Idempotency Keys（離線 mutation 安全重播）
 - [x] PDF / 文字匯入 + 自動索引
 
-### 規劃中（Phase 3）
+#### Phase 3 — 生產部署就緒
+- [x] **Docker 容器化**：Express API + React SPA 多階段建構（`node:20-alpine` + `nginx:alpine`）
+- [x] **Docker Compose 完整 stack**：4 服務（postgres + redis + api + web）+ healthcheck 依賴鏈
+- [x] **nginx 生產配置**：SPA fallback routing + `/api/` proxy_pass，gzip 壓縮
+- [x] **CI/CD（GitHub Actions）**：typecheck + unit test + build + docker-build 兩 job 流水線
+- [x] **`.env.example` 環境變數範本**：完整文件，一行複製即可啟動
 
+### 規劃中（Phase 4）
+
+- [ ] **PostgreSQL Row-Level Security**：DB 層多租戶資料隔離
 - [ ] **Stripe 整合**：訂閱計劃管理、付款 Webhook
-- [ ] **動態 Feature Flags**：DB 儲存 + 管理 API，無需重啟切換
-- [ ] **遞迴 Agent 分解**：Worker 輸出可觸發子 Worker
-- [ ] **行動版 PWA 優化**：手勢操作、觸覺反饋
-- [ ] **KG 大圖優化**：能量閾值停止條件（> 50 節點穩定排版）
-- [ ] **多模態上傳**：圖片 OCR、音訊轉錄
+- [ ] **OpenTelemetry**：分散式 tracing（Jaeger / Grafana），升級現有 Prometheus 指標
+- [ ] **遞迴 Agent 分解**：Worker 輸出可觸發子 Worker（真正多層遞迴）
+- [ ] **多模態上傳**：圖片 OCR、音訊轉錄 → 自動索引進 KG
 - [ ] **自訂 AI 模型**：OpenAI、本地 Ollama 支援
+- [ ] **動態 Feature Flags**：DB 儲存 + 管理 API，無需重啟切換
+- [ ] **KG 大圖優化**：能量閾值停止條件（> 50 節點穩定排版）
 
 ---
 
