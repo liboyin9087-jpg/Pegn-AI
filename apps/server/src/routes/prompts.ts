@@ -234,19 +234,7 @@ export function registerPromptRoutes(app: Express): void {
   // Get prompt categories
   app.get('/api/v1/prompts/categories', async (req: Request, res: Response) => {
     try {
-      // This would typically query the database for distinct categories
-      // For now, return common categories
-      const categories = [
-        'ai-assistant',
-        'content-generation',
-        'analysis',
-        'summarization',
-        'translation',
-        'code-generation',
-        'creative-writing',
-        'data-processing'
-      ];
-
+      const categories = await promptOps.getCategories();
       res.json({ categories });
     } catch (error) {
       observability.error('Failed to get prompt categories', {

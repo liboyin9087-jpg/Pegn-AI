@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
+
+const genAI = process.env.GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  : null;
 
 export interface Prompt {
   id: string;
@@ -294,6 +299,19 @@ export class PromptOpsService {
     }
   }
 
+  async getCategories(): Promise<string[]> {
+    if (!pool) return [];
+    try {
+      const result = await pool.query(
+        `SELECT DISTINCT category FROM prompts WHERE is_active = true ORDER BY category`
+      );
+      return result.rows.map((r: any) => r.category);
+    } catch (error) {
+      observability.error('Failed to get prompt categories', { error });
+      return [];
+    }
+  }
+
   // Testing
   async runTests(promptId: string, testInputs: string[]): Promise<PromptTest[]> {
     const prompt = await this.getPrompt(promptId);
@@ -375,13 +393,17 @@ export class PromptOpsService {
   }
 
   private async mockLLMCall(prompt: string, input: string): Promise<string> {
-    // Mock implementation - replace with actual LLM call
-    observability.debug('Mock LLM call', { prompt: prompt.substring(0, 100), input: input.substring(0, 100) });
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    return `Mock response for: ${input}`;
+    if (genAI) {
+      try {
+        const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
+        const result = await model.generateContent(`${prompt}\n\n${input}`);
+        return result.response.text();
+      } catch (error) {
+        observability.warn('Gemini call failed in prompt test, using fallback', { error });
+      }
+    }
+    // Fallback when Gemini is not configured
+    return `[No GEMINI_API_KEY configured] Prompt: ${prompt.substring(0, 50)}... Input: ${input}`;
   }
 
   private async calculateScore(input: string, output: string): Promise<number> {
