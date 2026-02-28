@@ -303,6 +303,11 @@ export const deleteKgEntity = (entityId: string) =>
   api<{ success: boolean }>(`/kg/entities/${entityId}`, {
     method: 'DELETE',
   });
+export const saveKgEntityPosition = (entityId: string, x: number, y: number) =>
+  api<{ success: boolean }>(`/kg/entities/${entityId}/position`, {
+    method: 'PATCH',
+    body: JSON.stringify({ x, y }),
+  });
 
 // ── Agent ────────────────────────────────────────────────────
 export const startSupervisorAgent = (

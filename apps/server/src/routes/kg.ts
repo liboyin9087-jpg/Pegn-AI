@@ -27,7 +27,7 @@ export function registerKgRoutes(app: Express): void {
     const { type } = req.query;
     if (!workspace_id) { res.status(400).json({ error: 'workspace_id 為必填' }); return; }
 
-    let query = `SELECT id, name, entity_type, description, document_id, created_at FROM kg_entities WHERE workspace_id = $1`;
+    let query = `SELECT id, name, entity_type, description, document_id, metadata, created_at FROM kg_entities WHERE workspace_id = $1`;
     const params: any[] = [workspace_id];
     if (type) { query += ` AND entity_type = $2`; params.push(type); }
     query += ` ORDER BY created_at DESC LIMIT 100`;
@@ -69,6 +69,24 @@ export function registerKgRoutes(app: Express): void {
     }
 
     res.json({ entity: result.rows[0] });
+  });
+
+  // 更新實體節點位置（持久化 ReactFlow 位置）
+  app.patch('/api/v1/kg/entities/:entity_id/position', authMiddleware, checkPermission('collection:edit', 'kg_entity'), async (req: Request, res: Response) => {
+    if (!pool) { res.status(503).json({ error: 'DB unavailable' }); return; }
+    const { entity_id } = req.params;
+    const { x, y } = req.body ?? {};
+    if (typeof x !== 'number' || typeof y !== 'number') {
+      res.status(400).json({ error: 'x and y must be numbers' });
+      return;
+    }
+    await pool.query(
+      `UPDATE kg_entities
+       SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{position}', $2::jsonb), updated_at = NOW()
+       WHERE id = $1`,
+      [entity_id, JSON.stringify({ x, y })]
+    );
+    res.json({ success: true });
   });
 
   // 刪除實體（關聯會由 FK cascade 刪除）
