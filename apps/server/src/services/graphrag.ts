@@ -93,13 +93,16 @@ export async function graphRAGQuery(
     [query, workspaceId, topK]
   )).rows;
 
-  // 3. KG 實體搜尋（根據 query 找相關實體，再取鄰居）
+  // 3. KG 實體搜尋（根據 query 所有詞找相關實體，再取鄰居）
+  // Fix 6: 改用全詞匹配（ILIKE ANY），避免只取第一個詞而漏掉相關實體
+  const queryWords = query.trim().split(/\s+/).filter(w => w.length >= 2).slice(0, 6);
+  const likePatterns = queryWords.map(w => `%${w}%`);
   const entityResults = (await pool.query(
     `SELECT id, name, entity_type, document_id FROM kg_entities
      WHERE workspace_id = $1
-       AND (name ILIKE $2 OR description ILIKE $2)
+       AND (name ILIKE ANY($2::text[]) OR description ILIKE ANY($2::text[]))
      LIMIT 5`,
-    [workspaceId, `%${query.split(' ')[0]}%`]
+    [workspaceId, likePatterns]
   )).rows;
 
   // 取 KG 鄰居並轉成 search chunk
