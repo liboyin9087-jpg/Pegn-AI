@@ -1,4 +1,16 @@
 import 'dotenv/config';
+
+// ── Fix 4: JWT_SECRET 啟動強制驗證 ──────────────────────────────
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret || jwtSecret === 'dev-secret') {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[FATAL] JWT_SECRET 必須在生產環境中設定，且不可使用預設值 "dev-secret"。伺服器已停止。');
+    process.exit(1);
+  } else {
+    console.warn('[WARN] JWT_SECRET 使用預設值 "dev-secret"，請在生產環境中設定強密鑰。');
+  }
+}
+
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
@@ -27,7 +39,9 @@ import { registerCollectionViewRoutes } from './routes/collection_views.js';
 import { registerInviteRoutes } from './routes/invites.js';
 import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
+import { registerBillingRoutes } from './routes/billing.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
+import { authMiddleware } from './middleware/auth.js';
 
 const app = express();
 app.use(cors({
@@ -70,6 +84,7 @@ registerInviteRoutes(app);
 registerCommentRoutes(app);
 registerInboxRoutes(app);
 registerOfflineObservabilityRoutes(app);
+registerBillingRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {
@@ -92,8 +107,8 @@ app.get('/metrics', (req, res) => {
   res.send(observability.exportPrometheusMetrics());
 });
 
-// Add logs endpoint for debugging
-app.get('/admin/logs', (req, res) => {
+// Add logs endpoint for debugging (Fix 3: 加入認證保護)
+app.get('/admin/logs', authMiddleware, (req, res) => {
   const { level, limit = 100 } = req.query;
   const logs = observability.getLogs(level as any, undefined, parseInt(limit as string));
   res.json({ logs });

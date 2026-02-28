@@ -51,7 +51,7 @@ type AgentEvent =
   | { type: 'error'; message: string }
   | { type: 'done' };
 
-type AgentTemplate = 'supervisor' | 'research' | 'summarize';
+type AgentTemplate = 'supervisor' | 'research' | 'summarize' | 'brainstorm' | 'outline';
 
 const runListeners = new Map<string, Set<(event: AgentEvent) => void>>();
 
@@ -69,11 +69,11 @@ export function subscribeToRun(runId: string, cb: (event: AgentEvent) => void): 
   };
 }
 
+// Fixed orchestration steps — worker steps are created dynamically after planning
 const STEP_TEMPLATES = [
-  { step_key: 'planner', name: '規劃任務', worker: 'planner', position: 1 },
-  { step_key: 'retriever', name: '檢索證據', worker: 'retriever', position: 2 },
-  { step_key: 'analyst', name: '分析整合', worker: 'analyst', position: 3 },
-  { step_key: 'writer', name: '產出結果', worker: 'writer', position: 4 },
+  { step_key: 'planner',  name: '規劃任務', worker: 'planner',  position: 1  },
+  { step_key: 'analyst',  name: '分析整合', worker: 'analyst',  position: 30 },
+  { step_key: 'writer',   name: '產出結果', worker: 'writer',   position: 40 },
 ] as const;
 
 function approxTokenUsage(content: unknown): number {
@@ -199,6 +199,20 @@ function fallbackTaskPlan(query: string, template: AgentTemplate): string[] {
   if (template === 'summarize') {
     return ['抽取重點主題', '壓縮內容為精簡摘要', '整理可執行結論'];
   }
+  if (template === 'brainstorm') {
+    return [
+      `從不同角度拆解主題：${query}`,
+      '發散思考：列出非顯而易見的創意方向',
+      '歸納並評估各想法的可行性與潛力',
+    ];
+  }
+  if (template === 'outline') {
+    return [
+      `分析主題核心架構：${query}`,
+      '規劃層次化大綱（章節 / 小節 / 要點）',
+      '補充每個章節的關鍵內容提示',
+    ];
+  }
   return [
     `界定問題範圍：${query}`,
     '收集與問題直接相關的證據與來源',
@@ -321,11 +335,19 @@ async function analystWorker(retrieved: any, query: string): Promise<{ analysis:
   }
 }
 
-async function writerWorker(query: string, analysis: any, template: AgentTemplate): Promise<{ answer: string; citations: string[] }> {
+// Fix 7: 使用真正的 LLM 串流輸出，onToken callback 在生成過程中即時推送 token
+async function writerWorker(
+  query: string,
+  analysis: any,
+  template: AgentTemplate,
+  onToken?: (token: string) => void
+): Promise<{ answer: string; citations: string[] }> {
   const model = await getModel();
-  const basePrompt = template === 'summarize'
-    ? '請輸出精簡摘要與行動重點。'
-    : '請輸出結構化答案，包含重點與可執行建議。';
+  const basePrompt =
+    template === 'summarize' ? '請輸出精簡摘要與行動重點。' :
+    template === 'brainstorm' ? '請輸出多角度創意想法，以發散思考為主，條列各方向及其潛力。' :
+    template === 'outline' ? '請輸出層次清晰的結構化大綱，包含章節標題與各章節的核心要點提示。' :
+    '請輸出結構化答案，包含重點與可執行建議。';
 
   if (!model) {
     const answer = `${basePrompt}\n\n問題：${query}\n\n${analysis.analysis ?? ''}`;
@@ -334,14 +356,32 @@ async function writerWorker(query: string, analysis: any, template: AgentTemplat
 
   const prompt = `${basePrompt}\n\n請用繁體中文回答。\n問題：${query}\n\n分析：${analysis.analysis}`;
   try {
-    const result = await model.generateContent(prompt);
-    const answer = result.response.text();
+    const stream = await model.generateContentStream(prompt);
+    let answer = '';
+    for await (const chunk of stream.stream) {
+      const text = chunk.text();
+      if (text) {
+        answer += text;
+        onToken?.(text);
+      }
+    }
     const citations = [...new Set(answer.match(/\[(\d+)\]/g) ?? [])];
     return { answer, citations };
   } catch {
     const answer = `${basePrompt}\n\n問題：${query}\n\n${analysis.analysis ?? ''}`;
     return { answer, citations: [] };
   }
+}
+
+async function insertWorkerStep(runId: string, stepKey: string, name: string, position: number): Promise<void> {
+  const p = pool;
+  if (!p) return;
+  await p.query(
+    `INSERT INTO agent_steps (run_id, step_key, name, worker, position, status)
+     VALUES ($1, $2, $3, 'retriever_worker', $4, 'pending')
+     ON CONFLICT (run_id, step_key) DO NOTHING`,
+    [runId, stepKey, name, position]
+  );
 }
 
 async function runSupervisorPipeline(
@@ -353,31 +393,64 @@ async function runSupervisorPipeline(
 ): Promise<void> {
   emitEvent(runId, { type: 'meta', run_id: runId, mode });
 
+  // ── 1. Planner (position 1) ────────────────────────────────
   const planned = await runStep(runId, 'planner', { query, template }, async ({ query: q }) => {
     return plannerWorker(q, template);
   });
 
-  const retrieved = await runStep(runId, 'retriever', { tasks: planned.tasks, mode, workspace_id: workspaceId }, async ({ tasks }) => {
-    const taskResults = [] as any[];
-    for (const task of tasks) {
-      const result = await retrieveForTask(task, workspaceId, mode);
-      taskResults.push({ task, ...result });
-    }
-    return taskResults;
-  });
+  // ── 2. Parallel worker agents (positions 10, 11, 12…) ──────
+  // Insert a DB step for each task so the UI can track per-task progress
+  await Promise.all(planned.tasks.map((task, i) =>
+    insertWorkerStep(runId, `worker_${i + 1}`, `Worker ${i + 1}: ${task.slice(0, 40)}`, 10 + i)
+  ));
 
+  // Run all retrieval workers concurrently
+  const workerSettled = await Promise.allSettled(
+    planned.tasks.map(async (task, i) => {
+      const stepKey = `worker_${i + 1}`;
+      await updateStep(runId, stepKey, { status: 'running', input: { task, mode }, started_at: new Date().toISOString() });
+      try {
+        const result = await retrieveForTask(task, workspaceId, mode);
+        const workerResult = { task, ...result };
+        await updateStep(runId, stepKey, {
+          status: 'done',
+          output: workerResult,
+          token_usage: approxTokenUsage(workerResult),
+          finished_at: new Date().toISOString(),
+        });
+        return workerResult;
+      } catch (err) {
+        await updateStep(runId, stepKey, {
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Worker failed',
+          finished_at: new Date().toISOString(),
+        });
+        throw err;
+      }
+    })
+  );
+
+  // Collect successful worker results (partial results still feed the analyst)
+  const retrieved = workerSettled
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+    .map(r => r.value);
+
+  const failedWorkers = workerSettled.filter(r => r.status === 'rejected').length;
+  if (failedWorkers > 0) {
+    observability.warn('Some worker agents failed', { runId, failed: failedWorkers, total: planned.tasks.length });
+  }
+
+  // ── 3. Analyst (position 30) ───────────────────────────────
   const analysis = await runStep(runId, 'analyst', { query, retrieved }, async ({ query: q, retrieved: r }) => {
     return analystWorker(r, q);
   });
 
+  // ── 4. Writer (position 40) — real LLM streaming ──────────
   const finalResult = await runStep(runId, 'writer', { query, analysis, template }, async ({ query: q, analysis: a }) => {
-    return writerWorker(q, a, template);
+    return writerWorker(q, a, template, (token) => {
+      emitEvent(runId, { type: 'token', token });
+    });
   });
-
-  const answerText = finalResult.answer ?? '';
-  for (const char of answerText) {
-    emitEvent(runId, { type: 'token', token: char });
-  }
 
   await markRun(runId, 'done', {
     result: {
@@ -387,7 +460,7 @@ async function runSupervisorPipeline(
       tasks: planned.tasks,
       retrieved,
     },
-    token_usage: approxTokenUsage(answerText),
+    token_usage: approxTokenUsage(finalResult.answer ?? ''),
   });
 
   emitEvent(runId, { type: 'done' });

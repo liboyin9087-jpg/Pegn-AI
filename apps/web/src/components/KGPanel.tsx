@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import ReactFlow, {
   Node, Edge, Background, Controls, MiniMap,
   useNodesState, useEdgesState, addEdge,
@@ -12,6 +12,7 @@ import {
   kgExtract,
   kgNeighbors,
   kgRelationships,
+  saveKgEntityPosition,
   updateKgEntity,
 } from '../api/client';
 
@@ -136,6 +137,19 @@ export default function KGPanel({
   const [neighborLoading, setNeighborLoading] = useState(false);
 
   const [editingNode, setEditingNode] = useState<any>(null);
+  const positionSaveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const onNodeDragStop = useCallback((_: any, node: Node) => {
+    const timer = positionSaveTimers.current.get(node.id);
+    if (timer) clearTimeout(timer);
+    positionSaveTimers.current.set(node.id, setTimeout(() => {
+      saveKgEntityPosition(node.id, node.position.x, node.position.y).catch(() => {});
+      // Update local entity metadata so saved position survives re-renders
+      setAllEntities(prev => prev.map(e =>
+        e.id === node.id ? { ...e, metadata: { ...e.metadata, position: node.position } } : e
+      ));
+    }, 800));
+  }, []);
 
   const buildGraph = useCallback((
     entities: any[],
@@ -190,7 +204,22 @@ export default function KGPanel({
     let positions: Map<string, { x: number; y: number }>;
 
     if (layoutMode === 'force') {
-      positions = forceLayout(filtered, filteredRels);
+      // Use saved positions from metadata when available
+      const savedPositions = new Map<string, { x: number; y: number }>();
+      const needsLayout: any[] = [];
+      filtered.forEach(e => {
+        const saved = e.metadata?.position;
+        if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+          savedPositions.set(e.id, { x: saved.x, y: saved.y });
+        } else {
+          needsLayout.push(e);
+        }
+      });
+      if (needsLayout.length > 0) {
+        const computed = forceLayout(needsLayout, filteredRels);
+        computed.forEach((pos, id) => savedPositions.set(id, pos));
+      }
+      positions = savedPositions;
     } else {
       // Circle layout
       positions = new Map();
@@ -509,6 +538,7 @@ export default function KGPanel({
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onNodeClick={onNodeClick}
+            onNodeDragStop={onNodeDragStop}
             onPaneClick={() => setSelectedNode(null)}
             fitView
             fitViewOptions={{ padding: 0.2 }}

@@ -5,6 +5,7 @@ import { checkPermission } from '../middleware/rbac.js';
 import { getWorkspaceIdFromBody } from '../services/request.js';
 import { getRunById, startSupervisorRun, subscribeToRun } from '../services/agent.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
+import { checkQuota, recordUsage } from '../services/quota.js';
 
 function sendSse(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -120,6 +121,12 @@ export function registerAgentRoutes(app: Express): void {
       return;
     }
 
+    const quota = await checkQuota(workspaceId, 'agent_runs');
+    if (!quota.allowed) {
+      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+      return;
+    }
+
     try {
       const runId = crypto.randomUUID();
       await startSupervisorRun({
@@ -130,6 +137,7 @@ export function registerAgentRoutes(app: Express): void {
         mode,
         template: 'supervisor',
       });
+      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
       res.json({ run_id: runId, status: 'started' });
     } catch (error) {
       res.status(500).json({
@@ -192,6 +200,60 @@ export function registerAgentRoutes(app: Express): void {
     } catch (error) {
       res.status(500).json({
         error: 'Failed to start summarize run',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  // Brainstorm template.
+  app.post('/api/v1/agents/brainstorm', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+    const query = String(req.body?.query ?? '').trim();
+    const workspaceId = getWorkspaceIdFromBody(req.body);
+    if (!query || !workspaceId) {
+      res.status(400).json({ error: 'query and workspace_id are required' });
+      return;
+    }
+    try {
+      const runId = crypto.randomUUID();
+      await startSupervisorRun({
+        runId,
+        query,
+        workspace_id: workspaceId,
+        user_id: req.userId!,
+        mode: 'auto',
+        template: 'brainstorm',
+      });
+      res.json({ run_id: runId, status: 'started' });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Failed to start brainstorm run',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  // Outline template.
+  app.post('/api/v1/agents/outline', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+    const query = String(req.body?.query ?? '').trim();
+    const workspaceId = getWorkspaceIdFromBody(req.body);
+    if (!query || !workspaceId) {
+      res.status(400).json({ error: 'query and workspace_id are required' });
+      return;
+    }
+    try {
+      const runId = crypto.randomUUID();
+      await startSupervisorRun({
+        runId,
+        query,
+        workspace_id: workspaceId,
+        user_id: req.userId!,
+        mode: 'hybrid',
+        template: 'outline',
+      });
+      res.json({ run_id: runId, status: 'started' });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Failed to start outline run',
         details: error instanceof Error ? error.message : 'Unknown error',
       });
     }

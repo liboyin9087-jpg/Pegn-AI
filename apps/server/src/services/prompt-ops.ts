@@ -346,6 +346,19 @@ export class PromptOpsService {
     }
   }
 
+  async getCategories(): Promise<string[]> {
+    if (!pool) return [];
+    try {
+      const result = await pool.query(
+        `SELECT DISTINCT category FROM prompts WHERE is_active = true ORDER BY category`
+      );
+      return result.rows.map((r: any) => r.category);
+    } catch (error) {
+      observability.error('Failed to get prompt categories', { error });
+      return [];
+    }
+  }
+
   // Testing
   async runTests(promptId: string, testInputs: string[]): Promise<PromptTest[]> {
     const prompt = await this.getPrompt(promptId);
