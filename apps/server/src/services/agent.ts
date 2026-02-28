@@ -51,7 +51,7 @@ type AgentEvent =
   | { type: 'error'; message: string }
   | { type: 'done' };
 
-type AgentTemplate = 'supervisor' | 'research' | 'summarize';
+type AgentTemplate = 'supervisor' | 'research' | 'summarize' | 'brainstorm' | 'outline';
 
 const runListeners = new Map<string, Set<(event: AgentEvent) => void>>();
 
@@ -199,6 +199,20 @@ function fallbackTaskPlan(query: string, template: AgentTemplate): string[] {
   if (template === 'summarize') {
     return ['抽取重點主題', '壓縮內容為精簡摘要', '整理可執行結論'];
   }
+  if (template === 'brainstorm') {
+    return [
+      `從不同角度拆解主題：${query}`,
+      '發散思考：列出非顯而易見的創意方向',
+      '歸納並評估各想法的可行性與潛力',
+    ];
+  }
+  if (template === 'outline') {
+    return [
+      `分析主題核心架構：${query}`,
+      '規劃層次化大綱（章節 / 小節 / 要點）',
+      '補充每個章節的關鍵內容提示',
+    ];
+  }
   return [
     `界定問題範圍：${query}`,
     '收集與問題直接相關的證據與來源',
@@ -329,9 +343,11 @@ async function writerWorker(
   onToken?: (token: string) => void
 ): Promise<{ answer: string; citations: string[] }> {
   const model = await getModel();
-  const basePrompt = template === 'summarize'
-    ? '請輸出精簡摘要與行動重點。'
-    : '請輸出結構化答案，包含重點與可執行建議。';
+  const basePrompt =
+    template === 'summarize' ? '請輸出精簡摘要與行動重點。' :
+    template === 'brainstorm' ? '請輸出多角度創意想法，以發散思考為主，條列各方向及其潛力。' :
+    template === 'outline' ? '請輸出層次清晰的結構化大綱，包含章節標題與各章節的核心要點提示。' :
+    '請輸出結構化答案，包含重點與可執行建議。';
 
   if (!model) {
     const answer = `${basePrompt}\n\n問題：${query}\n\n${analysis.analysis ?? ''}`;

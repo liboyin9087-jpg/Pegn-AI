@@ -449,3 +449,23 @@ CREATE TABLE IF NOT EXISTS api_idempotency_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_user_workspace ON api_idempotency_keys(user_id, workspace_id, operation);
+
+-- ============================================================
+-- Webhook Subscriptions (DB-persisted)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    events TEXT[] NOT NULL DEFAULT '{}',
+    secret TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_workspace ON webhook_subscriptions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_user ON webhook_subscriptions(user_id);
+DROP TRIGGER IF EXISTS update_webhook_subscriptions_updated_at ON webhook_subscriptions;
+CREATE TRIGGER update_webhook_subscriptions_updated_at BEFORE UPDATE ON webhook_subscriptions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

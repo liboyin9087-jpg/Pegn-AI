@@ -197,6 +197,60 @@ export function registerAgentRoutes(app: Express): void {
     }
   });
 
+  // Brainstorm template.
+  app.post('/api/v1/agents/brainstorm', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+    const query = String(req.body?.query ?? '').trim();
+    const workspaceId = getWorkspaceIdFromBody(req.body);
+    if (!query || !workspaceId) {
+      res.status(400).json({ error: 'query and workspace_id are required' });
+      return;
+    }
+    try {
+      const runId = crypto.randomUUID();
+      await startSupervisorRun({
+        runId,
+        query,
+        workspace_id: workspaceId,
+        user_id: req.userId!,
+        mode: 'auto',
+        template: 'brainstorm',
+      });
+      res.json({ run_id: runId, status: 'started' });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Failed to start brainstorm run',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
+  // Outline template.
+  app.post('/api/v1/agents/outline', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+    const query = String(req.body?.query ?? '').trim();
+    const workspaceId = getWorkspaceIdFromBody(req.body);
+    if (!query || !workspaceId) {
+      res.status(400).json({ error: 'query and workspace_id are required' });
+      return;
+    }
+    try {
+      const runId = crypto.randomUUID();
+      await startSupervisorRun({
+        runId,
+        query,
+        workspace_id: workspaceId,
+        user_id: req.userId!,
+        mode: 'hybrid',
+        template: 'outline',
+      });
+      res.json({ run_id: runId, status: 'started' });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Failed to start outline run',
+        details: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  });
+
   // Read run state (snake + camel compatibility)
   registerRunReadRoutes(app, '/api/v1/agents/runs/:run_id');
   registerRunReadRoutes(app, '/api/v1/agents/runs/:runId');
