@@ -5,6 +5,7 @@ import { checkPermission } from '../middleware/rbac.js';
 import { getWorkspaceIdFromBody } from '../services/request.js';
 import { getRunById, startSupervisorRun, subscribeToRun } from '../services/agent.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
+import { checkQuota, recordUsage } from '../services/quota.js';
 
 function sendSse(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -120,6 +121,12 @@ export function registerAgentRoutes(app: Express): void {
       return;
     }
 
+    const quota = await checkQuota(workspaceId, 'agent_runs');
+    if (!quota.allowed) {
+      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+      return;
+    }
+
     try {
       const runId = crypto.randomUUID();
       await startSupervisorRun({
@@ -130,6 +137,7 @@ export function registerAgentRoutes(app: Express): void {
         mode,
         template: 'supervisor',
       });
+      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
       res.json({ run_id: runId, status: 'started' });
     } catch (error) {
       res.status(500).json({

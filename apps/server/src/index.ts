@@ -39,6 +39,7 @@ import { registerCollectionViewRoutes } from './routes/collection_views.js';
 import { registerInviteRoutes } from './routes/invites.js';
 import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
+import { registerBillingRoutes } from './routes/billing.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { authMiddleware } from './middleware/auth.js';
 
@@ -83,6 +84,7 @@ registerInviteRoutes(app);
 registerCommentRoutes(app);
 registerInboxRoutes(app);
 registerOfflineObservabilityRoutes(app);
+registerBillingRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {

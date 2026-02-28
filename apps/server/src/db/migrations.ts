@@ -73,10 +73,10 @@ export async function checkSchema(): Promise<boolean> {
 
   try {
     const result = await pool.query(`
-      SELECT COUNT(*) as count FROM information_schema.tables 
-      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles')
+      SELECT COUNT(*) as count FROM information_schema.tables
+      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records')
     `);
-    return parseInt(result.rows[0].count) >= 8;
+    return parseInt(result.rows[0].count) >= 10;
   } catch (error) {
     console.error('[migrations] Failed to check schema:', error);
     return false;
