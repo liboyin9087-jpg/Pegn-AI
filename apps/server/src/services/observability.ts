@@ -45,16 +45,17 @@ export class ObservabilityService {
   }
 
   // Performance monitoring
-  recordRequestDuration(path: string, duration: number, statusCode: number): void {
+  recordRequestDuration(path: string, duration: number, statusCode: number, method = 'UNKNOWN'): void {
     this.recordMetric('http_request_duration', duration, {
       path,
+      method,
       status_code: statusCode.toString()
     });
 
     this.recordMetric('http_requests_total', 1, {
       path,
-      status_code: statusCode.toString(),
-      method: 'GET' // This should be extracted from request
+      method,
+      status_code: statusCode.toString()
     });
   }
 
@@ -332,8 +333,8 @@ export function requestTracker(req: Request, res: Response, next: Function) {
   // Track response
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    observability.recordRequestDuration(req.path, duration, res.statusCode);
-    
+    observability.recordRequestDuration(req.path, duration, res.statusCode, req.method);
+
     observability.info('Request completed', {
       method: req.method,
       path: req.path,

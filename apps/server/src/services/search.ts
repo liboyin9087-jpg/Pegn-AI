@@ -69,44 +69,51 @@ export class SearchService {
     if (!p) return { results: [], total: 0 };
     const bm25Weight = 1 - vectorWeight;
 
-    // Build WHERE clauses
-    const whereConditions = [];
-    const params: any[] = [];
-    let paramIndex = 1;
+    // Fixed params layout for main query:
+    // $1=query_string, $2=embedding_vector, $3=bm25Weight, $4=vectorWeight, $5=limit, $6=offset, $7+=where conditions
+    const whereConditions: string[] = [];
+    const whereValues: any[] = [];
+    let paramIndex = 7;
 
     if (workspaceId) {
       whereConditions.push(`d.workspace_id = $${paramIndex++}`);
-      params.push(workspaceId);
+      whereValues.push(workspaceId);
     }
 
     if (filters?.blockType) {
       whereConditions.push(`si.title = $${paramIndex++}`);
-      params.push(filters.blockType);
+      whereValues.push(filters.blockType);
     }
 
     if (filters?.dateFrom) {
       whereConditions.push(`si.created_at >= $${paramIndex++}`);
-      params.push(filters.dateFrom);
+      whereValues.push(filters.dateFrom);
     }
 
     if (filters?.dateTo) {
       whereConditions.push(`si.created_at <= $${paramIndex++}`);
-      params.push(filters.dateTo);
+      whereValues.push(filters.dateTo);
     }
 
     if (filters?.properties) {
       for (const [key, value] of Object.entries(filters.properties)) {
-        whereConditions.push(`d.properties->>$${paramIndex++} = $${paramIndex++}`);
-        params.push(key, value);
+        const k1 = paramIndex++;
+        const k2 = paramIndex++;
+        whereConditions.push(`d.properties->>$${k1} = $${k2}`);
+        whereValues.push(key, value);
       }
     }
 
     const whereClause = whereConditions.length > 0 ? `AND ${whereConditions.join(' AND ')}` : '';
 
+    const queryEmbedding = await this.getQueryEmbedding(query);
+    // Format embedding as pgvector literal string
+    const embeddingStr = `[${queryEmbedding.join(',')}]`;
+
     // Hybrid search query combining BM25 and vector similarity
     const searchQuery = `
       WITH bm25_rank AS (
-        SELECT 
+        SELECT
           si.document_id,
           si.block_id,
           si.content,
@@ -121,7 +128,7 @@ export class SearchService {
         ${whereClause}
       ),
       vector_rank AS (
-        SELECT 
+        SELECT
           si.document_id,
           si.block_id,
           si.content,
@@ -135,7 +142,7 @@ export class SearchService {
         WHERE si.content_vector IS NOT NULL
         ${whereClause}
       )
-      SELECT 
+      SELECT
         COALESCE(b.document_id, v.document_id) as document_id,
         COALESCE(b.document_title, v.document_title) as document_title,
         COALESCE(b.block_id, v.block_id) as block_id,
@@ -146,7 +153,7 @@ export class SearchService {
         (COALESCE(b.bm25_score, 0) * $3 + COALESCE(v.vector_score, 0) * $4) as score
       FROM bm25_rank b
       FULL OUTER JOIN vector_rank v ON (
-        b.document_id = v.document_id AND 
+        b.document_id = v.document_id AND
         (b.block_id IS NULL AND v.block_id IS NULL OR b.block_id = v.block_id)
       )
       WHERE COALESCE(b.bm25_score, 0) > 0 OR COALESCE(v.vector_score, 0) > 0
@@ -154,29 +161,42 @@ export class SearchService {
       LIMIT $5 OFFSET $6
     `;
 
-    // Get embedding for query (this would normally call an embedding service)
-    const queryEmbedding = await this.getQueryEmbedding(query);
-
-    params.unshift(queryEmbedding, vectorWeight, bm25Weight, limit, offset);
-
+    // Params: [$1=query, $2=embedding, $3=bm25Weight, $4=vectorWeight, $5=limit, $6=offset, $7+=where values]
+    const params: any[] = [query, embeddingStr, bm25Weight, vectorWeight, limit, offset, ...whereValues];
     const result = await p.query(searchQuery, params);
 
-    // Get total count
+    // Count query uses its own independent param indexing starting from $1
+    const countConditions: string[] = [];
+    const countValues: any[] = [query];
+    let countIdx = 2;
+
+    if (workspaceId) {
+      countConditions.push(`d.workspace_id = $${countIdx++}`);
+      countValues.push(workspaceId);
+    }
+    if (filters?.blockType) {
+      countConditions.push(`si.title = $${countIdx++}`);
+      countValues.push(filters.blockType);
+    }
+    if (filters?.dateFrom) {
+      countConditions.push(`si.created_at >= $${countIdx++}`);
+      countValues.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      countConditions.push(`si.created_at <= $${countIdx++}`);
+      countValues.push(filters.dateTo);
+    }
+    const countWhereClause = countConditions.length > 0 ? `AND ${countConditions.join(' AND ')}` : '';
+
     const countQuery = `
       SELECT COUNT(DISTINCT si.document_id) as total
       FROM search_index si
       JOIN documents d ON si.document_id = d.id
       WHERE (to_tsvector('english', si.content) @@ plainto_tsquery('english', $1) OR si.content_vector IS NOT NULL)
-      ${whereClause}
+      ${countWhereClause}
     `;
 
-    const countParams = [query];
-    if (workspaceId) countParams.push(workspaceId);
-    if (filters?.blockType) countParams.push(filters.blockType);
-    if (filters?.dateFrom) countParams.push(filters.dateFrom);
-    if (filters?.dateTo) countParams.push(filters.dateTo);
-
-    const countResult = await p.query(countQuery, countParams);
+    const countResult = await p.query(countQuery, countValues);
 
     return {
       results: result.rows.map((row: any) => ({

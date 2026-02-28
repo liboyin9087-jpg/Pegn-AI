@@ -321,7 +321,13 @@ async function analystWorker(retrieved: any, query: string): Promise<{ analysis:
   }
 }
 
-async function writerWorker(query: string, analysis: any, template: AgentTemplate): Promise<{ answer: string; citations: string[] }> {
+// Fix 7: 使用真正的 LLM 串流輸出，onToken callback 在生成過程中即時推送 token
+async function writerWorker(
+  query: string,
+  analysis: any,
+  template: AgentTemplate,
+  onToken?: (token: string) => void
+): Promise<{ answer: string; citations: string[] }> {
   const model = await getModel();
   const basePrompt = template === 'summarize'
     ? '請輸出精簡摘要與行動重點。'
@@ -334,8 +340,15 @@ async function writerWorker(query: string, analysis: any, template: AgentTemplat
 
   const prompt = `${basePrompt}\n\n請用繁體中文回答。\n問題：${query}\n\n分析：${analysis.analysis}`;
   try {
-    const result = await model.generateContent(prompt);
-    const answer = result.response.text();
+    const stream = await model.generateContentStream(prompt);
+    let answer = '';
+    for await (const chunk of stream.stream) {
+      const text = chunk.text();
+      if (text) {
+        answer += text;
+        onToken?.(text);
+      }
+    }
     const citations = [...new Set(answer.match(/\[(\d+)\]/g) ?? [])];
     return { answer, citations };
   } catch {
@@ -370,14 +383,14 @@ async function runSupervisorPipeline(
     return analystWorker(r, q);
   });
 
+  // Writer step 使用真實串流：token 在 LLM 生成過程中即時透過 SSE 推送給前端
   const finalResult = await runStep(runId, 'writer', { query, analysis, template }, async ({ query: q, analysis: a }) => {
-    return writerWorker(q, a, template);
+    return writerWorker(q, a, template, (token) => {
+      emitEvent(runId, { type: 'token', token });
+    });
   });
 
   const answerText = finalResult.answer ?? '';
-  for (const char of answerText) {
-    emitEvent(runId, { type: 'token', token: char });
-  }
 
   await markRun(runId, 'done', {
     result: {
