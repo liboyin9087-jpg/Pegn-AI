@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { marked } from 'marked';
+import { renderMarkdown } from '../lib/markdownRenderer';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles, Share2, MoreHorizontal, Save, Eye, EyeOff,
@@ -29,23 +29,31 @@ interface Props {
   onFocusThreadHandled?: () => void;
 }
 
-marked.setOptions({ breaks: true, gfm: true });
-
 // ── Block Commands ──────────────────────────────────────────────────────────
 const BLOCK_COMMANDS = [
-  { icon: '📝', label: 'Text', desc: '普通段落文字', prefix: '' },
-  { icon: 'H1', label: 'H1 大標題',  desc: '', prefix: '# ' },
-  { icon: 'H2', label: 'H2 中標題',  desc: '', prefix: '## ' },
-  { icon: 'H3', label: 'H3 小標題',  desc: '', prefix: '### ' },
-  { icon: '☑', label: '待辦事項',   desc: 'To-do list', prefix: '- [ ] ' },
-  { icon: '•',  label: '項目列表',   desc: 'Bullet list', prefix: '- ' },
-  { icon: '1.',  label: '有序列表',  desc: 'Numbered list', prefix: '1. ' },
-  { icon: '❮❯', label: '程式碼區塊', desc: 'Code block', prefix: '```\n', suffix: '\n```' },
-  { icon: '❝',  label: '引言',       desc: 'Quote', prefix: '> ' },
-  { icon: '—',  label: '分隔線',     desc: 'Divider', prefix: '\n---\n' },
-  { icon: '🧠', label: 'AI 續寫',    desc: '讓 AI 幫你繼續', prefix: '__AI_CONTINUE__' },
-  { icon: '📊', label: 'AI 摘要',    desc: '讓 AI 摘要文件', prefix: '__AI_SUMMARIZE__' },
-  { icon: '🌐', label: 'AI 翻譯',    desc: '翻譯為英文', prefix: '__AI_TRANSLATE__' },
+  { icon: '📝', label: 'Text',       desc: '普通段落文字',   prefix: '' },
+  { icon: 'H1', label: 'H1 大標題',  desc: '',               prefix: '# ' },
+  { icon: 'H2', label: 'H2 中標題',  desc: '',               prefix: '## ' },
+  { icon: 'H3', label: 'H3 小標題',  desc: '',               prefix: '### ' },
+  { icon: '☑',  label: '待辦事項',   desc: 'To-do list',    prefix: '- [ ] ' },
+  { icon: '•',  label: '項目列表',   desc: 'Bullet list',   prefix: '- ' },
+  { icon: '1.', label: '有序列表',   desc: 'Numbered list', prefix: '1. ' },
+  { icon: '❮❯', label: '程式碼區塊', desc: 'Code block',    prefix: '```\n', suffix: '\n```' },
+  { icon: '❝',  label: '引言',       desc: 'Quote',         prefix: '> ' },
+  { icon: '—',  label: '分隔線',     desc: 'Divider',       prefix: '\n---\n' },
+  // ── 新 Block 類型 ──────────────────────────────────────────────────────
+  { icon: 'ℹ️', label: 'Callout · 提示',    desc: '藍色提示框',   prefix: '> [!NOTE]\n> ' },
+  { icon: '💡', label: 'Callout · 技巧',    desc: '綠色技巧框',   prefix: '> [!TIP]\n> ' },
+  { icon: '⚠️', label: 'Callout · 警告',    desc: '黃色警告框',   prefix: '> [!WARNING]\n> ' },
+  { icon: '📌', label: 'Callout · 重要',    desc: '紫色重要框',   prefix: '> [!IMPORTANT]\n> ' },
+  { icon: '🔥', label: 'Callout · 危險',    desc: '紅色危險框',   prefix: '> [!CAUTION]\n> ' },
+  { icon: '▶',  label: 'Toggle 折疊區塊',   desc: '點擊展開內容', prefix: '> [!TOGGLE] 標題\n> ' },
+  { icon: '∑',  label: 'Math 區塊公式',     desc: 'KaTeX 區塊',   prefix: '$$\n', suffix: '\n$$' },
+  { icon: 'λ',  label: 'Math 行內公式',     desc: 'KaTeX 行內',   prefix: '$', suffix: '$' },
+  // ── AI 動作 ────────────────────────────────────────────────────────────
+  { icon: '🧠', label: 'AI 續寫',    desc: '讓 AI 幫你繼續',  prefix: '__AI_CONTINUE__' },
+  { icon: '📊', label: 'AI 摘要',    desc: '讓 AI 摘要文件',  prefix: '__AI_SUMMARIZE__' },
+  { icon: '🌐', label: 'AI 翻譯',    desc: '翻譯為英文',       prefix: '__AI_TRANSLATE__' },
 ];
 
 // ── AI Selection Popover ────────────────────────────────────────────────────
@@ -1326,7 +1334,7 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                 <motion.div
                   key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
                   className="prose-light min-h-96"
-                  dangerouslySetInnerHTML={{ __html: content ? marked(content) as string : '<p style="color:#c8c8ce;font-style:italic">無內容，切換至編輯模式開始撰寫...</p>' }}
+                  dangerouslySetInnerHTML={{ __html: content ? renderMarkdown(content) : '<p style="color:#c8c8ce;font-style:italic">無內容，切換至編輯模式開始撰寫...</p>' }}
                 />
               ) : (
                 <motion.textarea
