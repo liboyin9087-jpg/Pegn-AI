@@ -10,6 +10,7 @@ import OnboardingModal from './components/OnboardingModal';
 import UploadModal from './components/UploadModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import InboxPanel from './components/InboxPanel';
+import PageHeader from './components/PageHeader';
 import { DashboardShowcase } from './components/agent-dashboard/DashboardShowcase';
 import { CollectionView } from './components/database/CollectionView';
 import { useCollections, useCollectionViews } from './hooks/useCollections';
@@ -18,6 +19,7 @@ import {
   getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
   listWorkspaces, createWorkspace,
   listDocuments, createDocument, deleteDocument, renameDocument,
+  updateDocument, moveDocument,
   acceptInvite,
   listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
   getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
@@ -379,6 +381,49 @@ export default function App() {
     }
   };
 
+  const handleMoveDoc = useCallback(async (id: string, data: { parent_id: string | null; position: number }) => {
+    try {
+      await moveDocument(id, data);
+      setDocuments(prev => prev.map(d =>
+        d.id === id
+          ? { ...d, metadata: { ...(d.metadata ?? {}), parent_id: data.parent_id }, position: data.position }
+          : d
+      ));
+    } catch (err) {
+      console.error('Failed to move document', err);
+    }
+  }, []);
+
+  const handleUpdateDocMeta = useCallback(async (id: string, meta: Record<string, any>) => {
+    try {
+      const doc = documents.find(d => d.id === id);
+      if (!doc) return;
+      const newMeta = { ...(doc.metadata ?? {}), ...meta };
+      await updateDocument(id, { metadata: newMeta });
+      setDocuments(prev => prev.map(d => d.id === id ? { ...d, metadata: newMeta } : d));
+      if (activeDoc?.id === id) setActiveDoc((prev: any) => ({ ...prev, metadata: newMeta }));
+    } catch (err) {
+      console.error('Failed to update document metadata', err);
+    }
+  }, [documents, activeDoc]);
+
+  // Compute ancestor path for breadcrumb
+  const getAncestors = useCallback((docId: string): { id: string; title: string; icon?: string }[] => {
+    const result: { id: string; title: string; icon?: string }[] = [];
+    let current = documents.find(d => d.id === docId);
+    const visited = new Set<string>();
+    while (current) {
+      const parentId = current.metadata?.parent_id;
+      if (!parentId || visited.has(parentId)) break;
+      visited.add(parentId);
+      const parent = documents.find(d => d.id === parentId);
+      if (!parent) break;
+      result.unshift({ id: parent.id, title: parent.title, icon: parent.metadata?.icon });
+      current = parent;
+    }
+    return result;
+  }, [documents]);
+
   const handleOpenAI = useCallback((prompt?: string) => {
     setAiInitPrompt(prompt);
     setAiSheetOpen(true);
@@ -472,6 +517,7 @@ export default function App() {
                 onUpload={() => setShowUpload(true)}
                 onDeleteDoc={handleDeleteDoc}
                 onRenameDoc={handleRenameDoc}
+                onMoveDoc={handleMoveDoc}
                 inboxUnreadCount={inboxUnreadCount}
                 onOpenInbox={() => {
                   setInboxOpen(true);
@@ -556,7 +602,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden flex flex-col">
           <ErrorBoundary>
             {activeCollection ? (
               <CollectionView
@@ -566,13 +612,25 @@ export default function App() {
                 onUpdateView={() => { }}
               />
             ) : (
-              <Editor
-                doc={activeDoc}
-                workspaceId={workspace?.id}
-                onOpenAI={handleOpenAI}
-                focusThreadId={focusThreadId}
-                onFocusThreadHandled={() => setFocusThreadId(null)}
-              />
+              <div className="flex flex-col h-full overflow-y-auto">
+                <PageHeader
+                  doc={activeDoc}
+                  ancestors={activeDoc ? getAncestors(activeDoc.id) : []}
+                  onChangeIcon={icon => activeDoc && handleUpdateDocMeta(activeDoc.id, { icon })}
+                  onChangeCover={cover => activeDoc && handleUpdateDocMeta(activeDoc.id, { cover })}
+                  onChangeTitle={title => activeDoc && handleRenameDoc(activeDoc.id, title)}
+                  onNavigate={handleNavigateDoc}
+                />
+                <div className="flex-1">
+                  <Editor
+                    doc={activeDoc}
+                    workspaceId={workspace?.id}
+                    onOpenAI={handleOpenAI}
+                    focusThreadId={focusThreadId}
+                    onFocusThreadHandled={() => setFocusThreadId(null)}
+                  />
+                </div>
+              </div>
             )}
           </ErrorBoundary>
         </div>

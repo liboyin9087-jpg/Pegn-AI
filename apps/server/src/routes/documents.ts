@@ -177,6 +177,25 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
+  // Move document (change parent + position for sidebar DnD)
+  app.patch('/api/v1/documents/:id/move', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
+    try {
+      const { parent_id, position } = req.body;
+      const existing = await DocumentModel.findById(req.params.id);
+      if (!existing) { res.status(404).json({ error: 'Document not found' }); return; }
+      const newMeta = { ...(existing.metadata as Record<string, any> ?? {}), parent_id: parent_id ?? null };
+      const document = await DocumentModel.update(req.params.id, {
+        metadata: newMeta,
+        position: typeof position === 'number' ? position : undefined,
+        last_modified_by: req.userId,
+      });
+      if (!document) { res.status(404).json({ error: 'Document not found' }); return; }
+      res.json({ id: document.id, metadata: document.metadata, position: document.position });
+    } catch {
+      res.status(500).json({ error: 'Failed to move document' });
+    }
+  });
+
   // Delete document
   app.delete('/api/v1/documents/:id', authMiddleware, checkPermission('collection:delete', 'document'), async (req: AuthRequest, res: Response) => {
     try {

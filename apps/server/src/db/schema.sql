@@ -505,3 +505,10 @@ DROP TRIGGER IF EXISTS update_quota_limits_updated_at ON quota_limits;
 CREATE TRIGGER update_quota_limits_updated_at BEFORE UPDATE ON quota_limits FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at BEFORE UPDATE ON usage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+
+-- ============================================================
+-- Phase 4: Document position for sidebar ordering
+-- ============================================================
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS position FLOAT DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_documents_workspace_position ON documents(workspace_id, position);
