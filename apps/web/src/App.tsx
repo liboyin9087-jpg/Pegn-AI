@@ -639,6 +639,8 @@ export default function App() {
                     onOpenAI={handleOpenAI}
                     focusThreadId={focusThreadId}
                     onFocusThreadHandled={() => setFocusThreadId(null)}
+                    documents={documents}
+                    onNavigateDoc={handleNavigateDoc}
                   />
                 </div>
               </div>

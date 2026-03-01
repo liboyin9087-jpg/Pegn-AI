@@ -20,6 +20,9 @@ import {
   type CommentThread,
 } from '../api/client';
 import ShareModal from './ShareModal';
+import BacklinksPanel from './BacklinksPanel';
+
+interface Doc { id: string; title: string; content?: string; updatedAt?: string; }
 
 interface Props {
   doc: any;
@@ -27,6 +30,8 @@ interface Props {
   onOpenAI?: (prompt?: string) => void;
   focusThreadId?: string | null;
   onFocusThreadHandled?: () => void;
+  documents?: Doc[];
+  onNavigateDoc?: (docId: string) => void;
 }
 
 // ── Block Commands ──────────────────────────────────────────────────────────
@@ -389,6 +394,60 @@ function SlashMenu({ visible, x, y, filter, selectedIndex, onSelect, onClose }: 
   );
 }
 
+// ── Wiki-link [[ Menu ────────────────────────────────────────────────────────
+interface WikiLinkMenuProps {
+  visible: boolean; x: number; y: number;
+  query: string; selectedIndex: number;
+  documents: { id: string; title: string }[];
+  onSelect: (title: string) => void;
+  onClose: () => void;
+}
+
+function WikiLinkMenu({ visible, x, y, query, selectedIndex, documents, onSelect, onClose }: WikiLinkMenuProps) {
+  const filtered = documents
+    .filter(d => !query || d.title.toLowerCase().includes(query))
+    .slice(0, 8);
+
+  return (
+    <AnimatePresence>
+      {visible && filtered.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: -5 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: -5 }}
+          transition={{ duration: 0.12 }}
+          className="fixed z-50 rounded-xl overflow-hidden flex flex-col"
+          style={{ left: x, top: y, width: 260, maxHeight: 280, background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)' }}
+        >
+          <div className="px-3 py-2 flex-shrink-0" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <p style={{ fontSize: 10.5, color: 'var(--color-text-quaternary)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              連結至頁面
+            </p>
+          </div>
+          <div className="overflow-y-auto py-1">
+            {filtered.map((doc, i) => (
+              <button
+                key={doc.id}
+                onMouseDown={e => { e.preventDefault(); onSelect(doc.title); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors"
+                style={{ background: i === selectedIndex ? 'var(--color-accent-light)' : 'transparent', color: i === selectedIndex ? 'var(--color-accent)' : 'var(--color-text-primary)' }}
+                onMouseEnter={e => { if (i !== selectedIndex) e.currentTarget.style.background = 'var(--color-surface-secondary)'; }}
+                onMouseLeave={e => { if (i !== selectedIndex) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <span style={{ fontSize: 13 }}>📄</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{doc.title}</span>
+              </button>
+            ))}
+          </div>
+          <div className="px-3 py-1.5 flex-shrink-0" style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-surface-muted)' }}>
+            <p style={{ fontSize: 10, color: 'var(--color-text-quaternary)' }}>↑↓ 選擇 · Enter 插入 · Esc 關閉</p>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 // ── Inline AI Block ─────────────────────────────────────────────────────────
 interface InlineAIProps {
   visible: boolean;
@@ -570,7 +629,7 @@ function ToolbarDivider() {
 }
 
 // ── Main Editor ─────────────────────────────────────────────────────────────
-export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFocusThreadHandled }: Props) {
+export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFocusThreadHandled, documents = [], onNavigateDoc }: Props) {
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -585,6 +644,11 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
   // Slash command menu
   const [slashMenu, setSlashMenu] = useState<{ visible: boolean; x: number; y: number; filter: string; selectedIndex: number; slashStart: number }>({
     visible: false, x: 0, y: 0, filter: '', selectedIndex: 0, slashStart: -1,
+  });
+
+  // Wiki-link autocomplete ([[)
+  const [wikiMenu, setWikiMenu] = useState<{ visible: boolean; x: number; y: number; query: string; selectedIndex: number; bracketStart: number }>({
+    visible: false, x: 0, y: 0, query: '', selectedIndex: 0, bracketStart: -1,
   });
 
   // Inline AI
@@ -1047,7 +1111,23 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
     if (e.key === 'Escape') {
       setInlineAI(a => ({ ...a, visible: false }));
     }
-  }, [slashMenu]);
+
+    // ── Wiki-link [[… keyboard navigation ──────────────────────────────
+    if (wikiMenu.visible) {
+      const wikiFiltered = documents
+        .filter(d => !wikiMenu.query || d.title.toLowerCase().includes(wikiMenu.query))
+        .slice(0, 8);
+      if (e.key === 'ArrowDown') { e.preventDefault(); setWikiMenu(s => ({ ...s, selectedIndex: Math.min(s.selectedIndex + 1, wikiFiltered.length - 1) })); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setWikiMenu(s => ({ ...s, selectedIndex: Math.max(s.selectedIndex - 1, 0) })); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const picked = wikiFiltered[wikiMenu.selectedIndex];
+        if (picked) applyWikiLink(picked.title);
+        return;
+      }
+      if (e.key === 'Escape') { setWikiMenu(s => ({ ...s, visible: false })); return; }
+    }
+  }, [slashMenu, wikiMenu, documents]);
 
   // Handle input change — detect slash command
   const handleTextareaInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1085,7 +1165,44 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
       }
     }
     setSlashMenu(s => ({ ...s, visible: false }));
+
+    // ── Wiki-link [[… detection ──────────────────────────────────────────
+    const doubleBracket = val.lastIndexOf('[[', cur);
+    if (doubleBracket !== -1 && doubleBracket >= cur - 40) {
+      const query = val.slice(doubleBracket + 2, cur);
+      if (!query.includes('\n') && !query.includes(']]')) {
+        const lineCount2 = val.slice(0, doubleBracket).split('\n').length;
+        const taRect2 = ta.getBoundingClientRect();
+        const scrollOffset2 = ta.scrollTop;
+        const approxY2 = taRect2.top + lineCount2 * 28 - scrollOffset2 + 28 + 4;
+        setWikiMenu({
+          visible: true,
+          x: taRect2.left + 40,
+          y: Math.min(approxY2, window.innerHeight - 200),
+          query: query.toLowerCase(),
+          selectedIndex: 0,
+          bracketStart: doubleBracket,
+        });
+        return;
+      }
+    }
+    setWikiMenu(s => ({ ...s, visible: false }));
   }, [handleChange]);
+
+  const applyWikiLink = useCallback((title: string) => {
+    setWikiMenu(s => ({ ...s, visible: false }));
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const cur = ta.selectionStart;
+    const val = ta.value;
+    const newVal = val.slice(0, wikiMenu.bracketStart) + `[[${title}]]` + val.slice(cur);
+    applyContent(newVal);
+    // Move cursor after the inserted link
+    setTimeout(() => {
+      const pos = wikiMenu.bracketStart + title.length + 4;
+      ta.setSelectionRange(pos, pos);
+    }, 0);
+  }, [wikiMenu, applyContent]);
 
   const handleSlashSelect = useCallback((cmd: typeof BLOCK_COMMANDS[0]) => {
     setSlashMenu(s => ({ ...s, visible: false }));
@@ -1206,6 +1323,18 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
         selectedIndex={slashMenu.selectedIndex}
         onSelect={handleSlashSelect}
         onClose={() => setSlashMenu(s => ({ ...s, visible: false }))}
+      />
+
+      {/* Wiki-link [[ Popup */}
+      <WikiLinkMenu
+        visible={wikiMenu.visible}
+        x={wikiMenu.x}
+        y={wikiMenu.y}
+        query={wikiMenu.query}
+        selectedIndex={wikiMenu.selectedIndex}
+        documents={documents}
+        onSelect={applyWikiLink}
+        onClose={() => setWikiMenu(s => ({ ...s, visible: false }))}
       />
 
       {/* Inline AI Block */}
@@ -1335,6 +1464,15 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                   key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
                   className="prose-light min-h-96"
                   dangerouslySetInnerHTML={{ __html: content ? renderMarkdown(content) : '<p style="color:#c8c8ce;font-style:italic">無內容，切換至編輯模式開始撰寫...</p>' }}
+                  onClick={e => {
+                    const target = e.target as HTMLElement;
+                    const link = target.closest('[data-wikilink]') as HTMLElement | null;
+                    if (link) {
+                      const title = decodeURIComponent(link.dataset.wikilink ?? '');
+                      const found = documents.find(d => d.title.toLowerCase() === title.toLowerCase());
+                      if (found) onNavigateDoc?.(found.id);
+                    }
+                  }}
                 />
               ) : (
                 <motion.textarea
@@ -1351,6 +1489,14 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                 />
               )}
             </AnimatePresence>
+          {/* Backlinks Panel */}
+          {doc && documents.length > 0 && (
+            <BacklinksPanel
+              currentDoc={{ id: doc.id, title: doc.title ?? '無標題', content }}
+              documents={documents}
+              onNavigate={id => onNavigateDoc?.(id)}
+            />
+          )}
           </div>
         </div>
 

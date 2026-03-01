@@ -237,6 +237,15 @@ body {
 .katex-display { overflow-x: auto; padding: 4px 0; }
 .katex-error { color: #dc2626; font-size: 0.85em; }
 
+/* Wiki-links */
+.wikilink {
+  color: var(--color-accent, #2383e2);
+  border-bottom: 1px solid rgba(35,131,226,0.35);
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.wikilink:hover { border-bottom-color: var(--color-accent, #2383e2); }
+
 /* ─────────────────────────────────────────────────────────
    CMDK — Command Palette item highlight
 ───────────────────────────────────────────────────────── */
