@@ -5,6 +5,7 @@
  *  - Callout blocks  (GitHub-style alerts: > [!NOTE], > [!TIP], > [!WARNING], > [!IMPORTANT], > [!CAUTION])
  *  - Toggle blocks   (> [!TOGGLE] Title  →  <details><summary>Title</summary>…)
  *  - KaTeX math      ($$…$$ block, $…$ inline)
+ *  - Wiki-links      ([[Page Title]] → clickable span with data-wikilink)
  */
 
 import { marked, type Renderer } from 'marked';
@@ -113,12 +114,27 @@ function buildRenderer(): Partial<Renderer> {
   };
 }
 
+// ── Wiki-links ([[Page Title]]) ──────────────────────────────────────────────
+
+/**
+ * Replace [[Title]] with a clickable span.
+ * The consumer attaches a click handler via event delegation on `data-wikilink`.
+ */
+function processWikiLinks(html: string): string {
+  return html.replace(
+    /\[\[([^\]]+)\]\]/g,
+    (_match, title) =>
+      `<span class="wikilink" data-wikilink="${encodeURIComponent(title.trim())}" title="跳至：${title.trim()}">${title.trim()}</span>`,
+  );
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/** Render markdown → HTML with Callout, Toggle, and KaTeX support. */
+/** Render markdown → HTML with Callout, Toggle, KaTeX, and Wiki-link support. */
 export function renderMarkdown(source: string): string {
   const preprocessed = extractMath(source);
   const renderer = buildRenderer();
   const rawHtml = marked(preprocessed, { renderer: renderer as Renderer, breaks: true, gfm: true }) as string;
-  return restoreMath(rawHtml);
+  const withMath = restoreMath(rawHtml);
+  return processWikiLinks(withMath);
 }
