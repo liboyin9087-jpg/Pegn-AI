@@ -40,6 +40,7 @@ import { registerInviteRoutes } from './routes/invites.js';
 import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
 import { registerBillingRoutes } from './routes/billing.js';
+import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { authMiddleware } from './middleware/auth.js';
 
@@ -132,6 +133,10 @@ app.get('/health/detailed', async (req, res) => {
 const apiPort = Number(process.env.API_PORT ?? 4000);
 
 const httpServer = createServer(app);
+
+// ── WebSocket presence server ──────────────────────────────────────────────
+setupWebSocketServer(httpServer);
+
 httpServer.listen(apiPort, () => {
   console.log(`[api] listening on http://localhost:${apiPort}`);
   observability.info('API server started', { port: apiPort });
