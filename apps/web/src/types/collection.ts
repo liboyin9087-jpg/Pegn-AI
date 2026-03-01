@@ -15,9 +15,27 @@ export interface Collection {
 }
 
 export interface CollectionProperty {
-    type: 'text' | 'number' | 'select' | 'multi_select' | 'date' | 'checkbox' | 'url' | 'email' | 'phone';
+    type:
+        | 'text' | 'number' | 'select' | 'multi_select' | 'date'
+        | 'checkbox' | 'url' | 'email' | 'phone'
+        | 'formula'   // computed from other props
+        | 'relation'  // links to items in another collection
+        | 'rollup';   // aggregate from related collection
     name: string;
     options?: { label: string; value: string; color?: string }[];
+    /** formula type: JS-like expression, use prop("Name") to reference fields */
+    formula?: string;
+    /** relation type: which collection to link to */
+    relation?: {
+        targetCollectionId: string;
+        targetCollectionName?: string;
+    };
+    /** rollup type: aggregate a field across related items */
+    rollup?: {
+        relationPropId: string;   // ID of a relation property on this collection
+        targetPropId: string;     // ID of the property on the related collection
+        aggregation: 'count' | 'sum' | 'avg' | 'min' | 'max';
+    };
 }
 
 export interface CollectionView {

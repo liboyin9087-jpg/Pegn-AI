@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Table as TableIcon, Columns, Calendar as CalendarIcon,
@@ -12,13 +12,14 @@ import { ListView } from './ListView';
 import { GalleryView } from './GalleryView';
 import { SchemaEditor } from './SchemaEditor';
 import { PropertiesPanel } from './PropertiesPanel';
-import { exportCollection, updateCollectionView, updateCollectionSchema } from '../../api/client';
+import { exportCollection, updateCollectionView, updateCollectionSchema, listCollectionDocuments } from '../../api/client';
 import { useCollectionDocuments } from '../../hooks/useCollections';
 
 interface CollectionViewProps {
   collection: Collection;
   workspaceId: string;
   views: ViewType[];
+  collections?: Collection[];          // all workspace collections, for relation/rollup
   onUpdateView: (viewId: string, updates: any) => void;
   onUpdateCollection?: (updated: Collection) => void;
   onOpenFullPage?: (rowId: string) => void;
@@ -28,6 +29,7 @@ export function CollectionView({
   collection,
   workspaceId,
   views,
+  collections = [],
   onUpdateView,
   onUpdateCollection,
   onOpenFullPage,
@@ -39,6 +41,34 @@ export function CollectionView({
   const [showSchemaEditor, setShowSchemaEditor] = useState(false);
 
   const { documents, loading, addDocument, editDocument } = useCollectionDocuments(collection.id);
+
+  // ── Related items cache for relation/rollup cells ─────────────────────────
+  const [relatedItems, setRelatedItems] = useState<Map<string, any[]>>(new Map());
+  const prevRelColIds = useRef<string>('');
+
+  useEffect(() => {
+    const props = Object.values(collection.schema.properties);
+    const ids = [...new Set(
+      props
+        .filter(p => p.type === 'relation' && p.relation?.targetCollectionId)
+        .map(p => p.relation!.targetCollectionId),
+    )];
+    const key = ids.sort().join(',');
+    if (key === prevRelColIds.current) return;
+    prevRelColIds.current = key;
+    if (ids.length === 0) return;
+
+    Promise.all(
+      ids.map(async id => {
+        try {
+          const data = await listCollectionDocuments(id);
+          return [id, data.documents ?? []] as [string, any[]];
+        } catch {
+          return [id, []] as [string, any[]];
+        }
+      })
+    ).then(results => setRelatedItems(new Map(results)));
+  }, [collection.schema.properties]);
 
   const handleAddRow = async () => {
     try {
@@ -121,6 +151,7 @@ export function CollectionView({
             {...commonProps}
             onEditCell={handleEditCell}
             onOpenRow={setOpenRowId}
+            relatedItems={relatedItems}
           />
         );
       case 'board':
@@ -249,6 +280,7 @@ export function CollectionView({
               </button>
               <SchemaEditor
                 collection={collection}
+                collections={collections}
                 onSave={handleSaveSchema}
                 onClose={() => setShowSchemaEditor(false)}
               />
