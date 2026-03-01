@@ -182,6 +182,62 @@ body {
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ─────────────────────────────────────────────────────────
+   KATEX — font styles
+───────────────────────────────────────────────────────── */
+@import "katex/dist/katex.min.css";
+
+/* ─────────────────────────────────────────────────────────
+   EDITOR BLOCKS — Callout · Toggle · Math
+───────────────────────────────────────────────────────── */
+
+/* Callout */
+.editor-callout {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px 14px; border-radius: 8px;
+  border-left: 3px solid var(--callout-border);
+  background: var(--callout-bg); margin: 0.6em 0;
+}
+.editor-callout__title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--callout-color);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.editor-callout__icon { font-size: 14px; line-height: 1; }
+.editor-callout__body { font-size: 13.5px; color: #37352f; }
+.editor-callout__body > p:first-child { margin-top: 0; }
+.editor-callout__body > p:last-child  { margin-bottom: 0; }
+
+/* Toggle */
+.editor-toggle {
+  border: 1px solid var(--color-border, #e9e9e5);
+  border-radius: 8px; overflow: hidden; margin: 0.6em 0;
+}
+.editor-toggle__summary {
+  padding: 8px 14px; cursor: pointer;
+  font-size: 13.5px; font-weight: 500;
+  color: var(--color-text-primary, #37352f);
+  background: var(--color-surface-secondary, #f7f7f5);
+  list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.editor-toggle__summary::before {
+  content: '▶'; font-size: 9px;
+  color: var(--color-text-tertiary, #9b9b9b);
+  transition: transform 0.15s ease; flex-shrink: 0;
+}
+.editor-toggle[open] > .editor-toggle__summary::before { transform: rotate(90deg); }
+.editor-toggle__body {
+  padding: 10px 14px; font-size: 13.5px;
+  color: var(--color-text-primary, #37352f);
+}
+.editor-toggle__body > p:first-child { margin-top: 0; }
+.editor-toggle__body > p:last-child  { margin-bottom: 0; }
+
+/* KaTeX */
+.katex-display { overflow-x: auto; padding: 4px 0; }
+.katex-error { color: #dc2626; font-size: 0.85em; }
+
+/* ─────────────────────────────────────────────────────────
    CMDK — Command Palette item highlight
 ───────────────────────────────────────────────────────── */
 [cmdk-item][aria-selected="true"] > div {
