@@ -2,16 +2,23 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText, Plus, MoreHorizontal, Edit2, Trash2, Upload,
-  LogOut, Search, ChevronRight, FilePlus, Database, LayoutGrid, Bell
+  LogOut, Search, ChevronRight, FilePlus, Bell, GripVertical,
 } from 'lucide-react';
+import {
+  DndContext, DragOverlay, PointerSensor, KeyboardSensor,
+  useSensor, useSensors, useDroppable, useDraggable,
+  type DragEndEvent, type DragOverEvent,
+} from '@dnd-kit/core';
 import { Collection } from '../types/collection';
 
-interface Doc { id: string; title: string; metadata?: any; }
+interface Doc { id: string; title: string; metadata?: any; position?: number; }
 
 interface TreeNode extends Doc {
   children: TreeNode[];
   depth: number;
 }
+
+interface DropInfo { id: string; edge: 'before' | 'after' | 'inside'; }
 
 interface Props {
   workspace: any;
@@ -27,6 +34,7 @@ interface Props {
   onUpload: () => void;
   onDeleteDoc: (id: string) => void;
   onRenameDoc: (id: string, title: string) => void;
+  onMoveDoc?: (id: string, data: { parent_id: string | null; position: number }) => Promise<void>;
   inboxUnreadCount?: number;
   onOpenInbox?: () => void;
   onLogout: () => void;
@@ -52,11 +60,44 @@ function buildTree(docs: Doc[]): TreeNode[] {
   return roots;
 }
 
+// Flatten visible tree for DnD position computation
+function flattenVisible(nodes: TreeNode[], expandedIds: Set<string>, result: { id: string; parentId: string | null; position: number }[] = []): typeof result {
+  for (const node of nodes) {
+    result.push({ id: node.id, parentId: node.metadata?.parent_id ?? null, position: node.position ?? 0 });
+    if (expandedIds.has(node.id) && node.children.length > 0) {
+      flattenVisible(node.children, expandedIds, result);
+    }
+  }
+  return result;
+}
+
+// ── Drag ghost shown in DragOverlay ────────────────────────────────────────
+function DragGhost({ title, icon }: { title: string; icon?: string }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+      style={{
+        background: 'var(--color-surface)',
+        border: '1.5px solid var(--color-accent)',
+        boxShadow: 'var(--shadow-lg)',
+        fontSize: 13,
+        color: 'var(--color-text-primary)',
+        maxWidth: 220,
+        opacity: 0.95,
+      }}
+    >
+      <GripVertical size={10} style={{ color: 'var(--color-text-quaternary)', flexShrink: 0 }} />
+      <span style={{ flexShrink: 0 }}>{icon ?? '📝'}</span>
+      <span className="truncate">{title}</span>
+    </div>
+  );
+}
+
 // ── Tree node ──────────────────────────────────────────────────────────────
 function DocTreeNode({
   node, activeDoc, expandedIds, menuDocId, renamingId, renameVal, renameRef,
   onToggleExpand, onSelectDoc, onStartRename, onSubmitRename, onSetRenameVal,
-  onDeleteDoc, onNewChild, onSetMenuDocId, onClose,
+  onDeleteDoc, onNewChild, onSetMenuDocId, onClose, draggingId, dropInfo,
 }: {
   node: TreeNode;
   activeDoc: any;
@@ -74,15 +115,52 @@ function DocTreeNode({
   onNewChild: (parentId: string) => void;
   onSetMenuDocId: (id: string | null) => void;
   onClose?: () => void;
+  draggingId: string | null;
+  dropInfo: DropInfo | null;
 }) {
   const isActive = activeDoc?.id === node.id;
   const isExpanded = expandedIds.has(node.id);
   const hasChildren = node.children.length > 0;
   const indent = node.depth * 14;
+  const isDraggingThis = draggingId === node.id;
+
+  // Droppable — entire row
+  const { setNodeRef: setDropRef, isOver } = useDroppable({ id: node.id });
+
+  // Draggable — handle only
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: node.id });
+
+  const isDropTarget = dropInfo?.id === node.id;
+  const showBeforeLine = isDropTarget && dropInfo?.edge === 'before';
+  const showAfterLine = isDropTarget && dropInfo?.edge === 'after';
+  const showInsideHighlight = isDropTarget && dropInfo?.edge === 'inside';
 
   return (
-    <div>
-      <div className="relative group" onClick={e => e.stopPropagation()}>
+    <div style={{ opacity: isDragging ? 0.35 : 1 }}>
+      {/* Drop indicator BEFORE */}
+      {showBeforeLine && (
+        <div
+          style={{
+            marginLeft: 6 + indent,
+            marginRight: 6,
+            height: 2,
+            borderRadius: 1,
+            background: 'var(--color-accent)',
+            marginBottom: -1,
+          }}
+        />
+      )}
+
+      <div
+        ref={setDropRef}
+        className="relative group"
+        onClick={e => e.stopPropagation()}
+        style={{
+          outline: showInsideHighlight ? '2px solid var(--color-accent)' : undefined,
+          borderRadius: showInsideHighlight ? 6 : undefined,
+          margin: showInsideHighlight ? '1px 4px' : undefined,
+        }}
+      >
         {renamingId === node.id ? (
           <div
             className="mx-1 px-2 py-1 rounded-md"
@@ -122,6 +200,19 @@ function DocTreeNode({
             onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--color-panel-hover)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = isActive ? 'var(--color-accent-light)' : 'transparent'; }}
           >
+            {/* Drag handle */}
+            <span
+              ref={setDragRef}
+              {...attributes}
+              {...listeners}
+              className="flex-shrink-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded cursor-grab active:cursor-grabbing"
+              style={{ width: 14, height: 16, color: 'var(--color-text-quaternary)', touchAction: 'none' }}
+              onClick={e => e.stopPropagation()}
+              title="拖曳排序"
+            >
+              <GripVertical size={10} />
+            </span>
+
             <span
               className="flex-shrink-0 flex items-center justify-center rounded transition-colors"
               style={{ width: 16, height: 16, color: hasChildren ? 'var(--color-text-quaternary)' : 'transparent', cursor: hasChildren ? 'pointer' : 'default' }}
@@ -206,6 +297,20 @@ function DocTreeNode({
         </AnimatePresence>
       </div>
 
+      {/* Drop indicator AFTER */}
+      {showAfterLine && (
+        <div
+          style={{
+            marginLeft: 6 + indent,
+            marginRight: 6,
+            height: 2,
+            borderRadius: 1,
+            background: 'var(--color-accent)',
+            marginTop: -1,
+          }}
+        />
+      )}
+
       <AnimatePresence>
         {isExpanded && hasChildren && (
           <motion.div
@@ -234,6 +339,8 @@ function DocTreeNode({
                 onNewChild={onNewChild}
                 onSetMenuDocId={onSetMenuDocId}
                 onClose={onClose}
+                draggingId={draggingId}
+                dropInfo={dropInfo}
               />
             ))}
           </motion.div>
@@ -264,6 +371,7 @@ function MenuButton({
 export default function Sidebar({
   workspace, documents, collections = [], activeDoc, activeCollection, user,
   onSelectDoc, onSelectCollection, onNewDoc, onNewCollection, onUpload, onDeleteDoc, onRenameDoc,
+  onMoveDoc,
   inboxUnreadCount = 0, onOpenInbox, onLogout,
   onClose, onOpenCommand,
 }: Props) {
@@ -272,6 +380,8 @@ export default function Sidebar({
   const [renameVal, setRenameVal] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const renameRef = useRef<HTMLInputElement>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropInfo, setDropInfo] = useState<DropInfo | null>(null);
 
   useEffect(() => { if (renamingId) renameRef.current?.focus(); }, [renamingId]);
 
@@ -299,7 +409,67 @@ export default function Sidebar({
     onNewDoc(parentId);
   }, [onNewDoc]);
 
+  // ── DnD sensors ────────────────────────────────────────────────────────
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
+
   const tree = buildTree(documents);
+
+  // Fractional index helper
+  const between = (a: number, b: number) => (a + b) / 2;
+
+  const handleDragOver = useCallback(({ active, over }: DragOverEvent) => {
+    if (!over || active.id === over.id) { setDropInfo(null); return; }
+
+    const flat = flattenVisible(tree, expandedIds);
+    const activeIdx = flat.findIndex(f => f.id === active.id);
+    const overIdx = flat.findIndex(f => f.id === over.id);
+    if (activeIdx === -1 || overIdx === -1) { setDropInfo(null); return; }
+
+    // Determine edge based on relative positions in the flat list
+    const edge: DropInfo['edge'] = activeIdx > overIdx ? 'before' : 'after';
+    setDropInfo({ id: over.id as string, edge });
+  }, [tree, expandedIds]);
+
+  const handleDragEnd = useCallback(({ active, over }: DragEndEvent) => {
+    setDraggingId(null);
+    setDropInfo(null);
+    if (!over || active.id === over.id || !onMoveDoc) return;
+
+    const flat = flattenVisible(tree, expandedIds);
+    const activeIdx = flat.findIndex(f => f.id === active.id);
+    const overIdx = flat.findIndex(f => f.id === over.id);
+    if (activeIdx === -1 || overIdx === -1) return;
+
+    const overItem = flat[overIdx];
+    const newParentId = overItem.parentId; // same parent as target
+
+    // Get siblings of target (excluding active), sorted by position
+    const siblings = flat
+      .filter(f => f.parentId === newParentId && f.id !== active.id)
+      .sort((a, b) => a.position - b.position);
+
+    const overSibIdx = siblings.findIndex(s => s.id === over.id);
+    const isBefore = activeIdx > overIdx; // active is below → moving up → insert before
+
+    let prevPos: number;
+    let nextPos: number;
+
+    if (isBefore) {
+      prevPos = overSibIdx > 0 ? siblings[overSibIdx - 1].position : 0;
+      nextPos = siblings[overSibIdx]?.position ?? prevPos + 2;
+    } else {
+      prevPos = siblings[overSibIdx]?.position ?? 0;
+      nextPos = overSibIdx + 1 < siblings.length ? siblings[overSibIdx + 1].position : prevPos + 2;
+    }
+
+    const newPosition = between(prevPos, nextPos);
+    onMoveDoc(active.id as string, { parent_id: newParentId, position: newPosition });
+  }, [tree, expandedIds, onMoveDoc]);
+
+  const draggingDoc = draggingId ? documents.find(d => d.id === draggingId) : null;
   const avatarLetter = (user?.name || user?.email || '?')[0].toUpperCase();
 
   return (
@@ -413,29 +583,43 @@ export default function Sidebar({
             <p className="text-xs">尚無文件</p>
           </div>
         ) : (
-          <div>
-            {tree.map(node => (
-              <DocTreeNode
-                key={node.id}
-                node={node}
-                activeDoc={activeDoc}
-                expandedIds={expandedIds}
-                menuDocId={menuDocId}
-                renamingId={renamingId}
-                renameVal={renameVal}
-                renameRef={renameRef as React.RefObject<HTMLInputElement | null>}
-                onToggleExpand={toggleExpand}
-                onSelectDoc={onSelectDoc}
-                onStartRename={startRename}
-                onSubmitRename={submitRename}
-                onSetRenameVal={setRenameVal}
-                onDeleteDoc={onDeleteDoc}
-                onNewChild={handleNewChild}
-                onSetMenuDocId={setMenuDocId}
-                onClose={onClose}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            onDragStart={({ active }) => setDraggingId(String(active.id))}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+          >
+            <div>
+              {tree.map(node => (
+                <DocTreeNode
+                  key={node.id}
+                  node={node}
+                  activeDoc={activeDoc}
+                  expandedIds={expandedIds}
+                  menuDocId={menuDocId}
+                  renamingId={renamingId}
+                  renameVal={renameVal}
+                  renameRef={renameRef as React.RefObject<HTMLInputElement | null>}
+                  onToggleExpand={toggleExpand}
+                  onSelectDoc={onSelectDoc}
+                  onStartRename={startRename}
+                  onSubmitRename={submitRename}
+                  onSetRenameVal={setRenameVal}
+                  onDeleteDoc={onDeleteDoc}
+                  onNewChild={handleNewChild}
+                  onSetMenuDocId={setMenuDocId}
+                  onClose={onClose}
+                  draggingId={draggingId}
+                  dropInfo={dropInfo}
+                />
+              ))}
+            </div>
+            <DragOverlay dropAnimation={{ duration: 180, easing: 'ease' }}>
+              {draggingDoc && (
+                <DragGhost title={draggingDoc.title} icon={draggingDoc.metadata?.icon} />
+              )}
+            </DragOverlay>
+          </DndContext>
         )}
 
         <div className="mt-4 pt-2 border-t border-gray-200/50">
@@ -459,9 +643,7 @@ export default function Sidebar({
                   key={col.id}
                   onClick={() => { onSelectCollection(col); onClose?.(); }}
                   className="w-full flex items-center gap-2 rounded-md text-left transition-colors py-1.5 px-3 mb-0.5"
-                  style={{
-                    background: isActive ? 'var(--color-accent-light)' : 'transparent',
-                  }}
+                  style={{ background: isActive ? 'var(--color-accent-light)' : 'transparent' }}
                   onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'var(--color-panel-hover)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = isActive ? 'var(--color-accent-light)' : 'transparent'; }}
                 >
@@ -471,7 +653,7 @@ export default function Sidebar({
                     style={{
                       fontSize: 13,
                       color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-                      fontWeight: isActive ? 500 : 400
+                      fontWeight: isActive ? 500 : 400,
                     }}
                   >
                     {col.name}
@@ -510,16 +692,11 @@ export default function Sidebar({
             >
               {avatarLetter}
             </div>
-
             <div className="flex-1 min-w-0">
-              <p
-                className="truncate"
-                style={{ fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500 }}
-              >
+              <p className="truncate" style={{ fontSize: 12.5, color: 'var(--color-text-primary)', fontWeight: 500 }}>
                 {user?.name || user?.email}
               </p>
             </div>
-
             <button
               onClick={onLogout}
               title="登出"

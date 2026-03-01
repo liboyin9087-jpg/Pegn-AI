@@ -14,6 +14,7 @@ export interface Document {
   metadata: Record<string, any>;
   collection_id?: string;
   properties?: Record<string, any>;
+  position?: number;
 }
 
 export interface CreateDocumentRequest {
@@ -25,6 +26,7 @@ export interface CreateDocumentRequest {
   metadata?: Record<string, any>;
   collection_id?: string;
   properties?: Record<string, any>;
+  position?: number;
 }
 
 export class DocumentModel {
@@ -68,7 +70,7 @@ export class DocumentModel {
     if (!p) throw new Error('Database not available');
 
     const result = await p.query(
-      'SELECT * FROM documents WHERE workspace_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3',
+      'SELECT * FROM documents WHERE workspace_id = $1 ORDER BY COALESCE(position, 0) ASC, created_at ASC LIMIT $2 OFFSET $3',
       [workspaceId, limit, offset]
     );
 
@@ -109,6 +111,10 @@ export class DocumentModel {
     if (data.properties !== undefined) {
       fields.push(`properties = $${paramIndex++}`);
       values.push(data.properties);
+    }
+    if (data.position !== undefined) {
+      fields.push(`position = $${paramIndex++}`);
+      values.push(data.position);
     }
 
     if (fields.length === 0) {

@@ -240,6 +240,8 @@ export const createDocument = (wsId: string, title: string, parentId?: string) =
   api<any>('/documents', { method: 'POST', body: JSON.stringify({ workspace_id: wsId, title, metadata: parentId ? { parent_id: parentId } : undefined }) });
 export const setDocumentParent = (id: string, parentId: string | null) =>
   api<any>(`/documents/${id}/parent`, { method: 'PATCH', body: JSON.stringify({ parent_id: parentId }) });
+export const moveDocument = (id: string, data: { parent_id: string | null; position: number }) =>
+  api<any>(`/documents/${id}/move`, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteDocument = (id: string) =>
   api<any>(`/documents/${id}`, { method: 'DELETE' });
 export const renameDocument = (id: string, title: string) =>
