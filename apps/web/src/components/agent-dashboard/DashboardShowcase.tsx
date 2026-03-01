@@ -160,10 +160,10 @@ export const DashboardShowcase: React.FC = () => {
                             <Activity size={18} className={fsmState === 'RUNNING' ? 'animate-pulse' : ''} />
                         </div>
                         <div>
-                            <h1 className="text-sm font-semibold text-agent-text-primary">Feature Implementation</h1>
+                            <h1 className="text-sm font-semibold text-agent-text-primary">功能實作</h1>
                             <div className="text-xs text-agent-text-tertiary">
-                                {fsmState === 'ERROR' ? <span className="text-red-400">Error Occurred</span> :
-                                    fsmState === 'WAITING' ? <span className="text-amber-400">Approval Needed</span> :
+                                {fsmState === 'ERROR' ? <span className="text-red-400">發生錯誤</span> :
+                                    fsmState === 'WAITING' ? <span className="text-amber-400">需要核准</span> :
                                         fsmState}
                             </div>
                         </div>
@@ -188,7 +188,7 @@ export const DashboardShowcase: React.FC = () => {
 
             <div className="px-4 py-6 flex flex-col gap-6 -mb-4 border-b border-transparent">
                 {/* Metrics Section */}
-                <section aria-label="Key Metrics" className="flex gap-3 relative z-0">
+                <section aria-label="主要指標" className="flex gap-3 relative z-0">
                     <MetricCard
                         label="Tokens"
                         value={metrics.tokens > 0 ? (metrics.tokens / 1000).toFixed(1) + 'k' : '--'}
@@ -206,8 +206,8 @@ export const DashboardShowcase: React.FC = () => {
                 </section>
 
                 {/* Swipe Action Demo & Timeline */}
-                <section aria-label="Workflow Timeline" className="bg-agent-bg-1 rounded-xl p-4 border border-agent-border-subtle relative z-10">
-                    <h2 className="text-xs font-semibold text-agent-text-tertiary uppercase tracking-wider mb-4 border-b border-white/[0.04] pb-2">Execution Trace</h2>
+                <section aria-label="工作流程時間軸" className="bg-agent-bg-1 rounded-xl p-4 border border-agent-border-subtle relative z-10">
+                    <h2 className="text-xs font-semibold text-agent-text-tertiary uppercase tracking-wider mb-4 border-b border-white/[0.04] pb-2">執行追蹤</h2>
 
                     <div className="flex flex-col gap-1 -mx-4 px-4 overflow-hidden">
                         <SwipeActionRow
@@ -232,21 +232,21 @@ export const DashboardShowcase: React.FC = () => {
                 onRetry={handleRetry}
                 onViewLogs={() => setSheetOpen(true)}
                 onApprove={handleApprove}
-                onReject={() => transitionTo('IDLE', 'User Rejected')}
+                onReject={() => transitionTo('IDLE', '使用者拒絕')}
             />
 
             {/* Expanded Bottom Sheet */}
             <BottomSheet
                 isOpen={sheetOpen}
                 onClose={() => setSheetOpen(false)}
-                title={fsmState === 'ERROR' ? "Error Details" : "Agent Logs"}
+                title={fsmState === 'ERROR' ? "錯誤詳情" : "Agent 執行紀錄"}
                 defaultTab={fsmState === 'ERROR' ? 'logs' : 'metadata'}
             >
                 <div className="py-4 space-y-4">
                     {fsmState === 'ERROR' && (
                         <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                            <h4 className="text-red-400 font-semibold text-sm mb-1">Missing Configuration</h4>
-                            <p className="text-xs text-red-300">The Babel configuration is missing from the repository root, which caused the ESLint analysis to fail during parsing.</p>
+                            <h4 className="text-red-400 font-semibold text-sm mb-1">缺少設定檔</h4>
+                            <p className="text-xs text-red-300">專案根目錄缺少 Babel 設定，導致 ESLint 在解析時失敗。</p>
                         </div>
                     )}
                     <div className="font-mono text-[11px] leading-relaxed text-agent-text-secondary bg-[#0a0a0a] p-4 rounded-lg border border-agent-border-subtle shadow-inner">

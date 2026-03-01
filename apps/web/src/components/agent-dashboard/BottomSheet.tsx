@@ -128,8 +128,8 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
                     <div className="w-8 h-1 bg-white/[0.28] rounded-full mx-auto" />
 
                     <div className="w-full flex justify-between items-center px-4 mt-3">
-                        <h3 className="text-sm font-semibold text-agent-text-primary truncate pr-4">{title || 'View Details'}</h3>
-                        <button onClick={onClose} aria-label="Close" className="w-8 h-8 flex items-center justify-center rounded-full bg-agent-bg-3 text-agent-text-secondary hover:text-white flex-shrink-0">
+                        <h3 className="text-sm font-semibold text-agent-text-primary truncate pr-4">{title || '查看詳情'}</h3>
+                        <button onClick={onClose} aria-label="關閉" className="w-8 h-8 flex items-center justify-center rounded-full bg-agent-bg-3 text-agent-text-secondary hover:text-white flex-shrink-0">
                             <X size={16} />
                         </button>
                     </div>
@@ -138,9 +138,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
                     {snapPoint !== 'peek' && (
                         <div className="flex border-b border-agent-border-default px-4 mt-2 mb-1 gap-6">
                             {[
-                                { id: 'logs', label: 'Logs', icon: <Terminal size={14} /> },
-                                { id: 'metadata', label: 'Inputs Output', icon: <Code size={14} /> },
-                                { id: 'history', label: 'History', icon: <Clock size={14} /> }
+                                { id: 'logs', label: '紀錄', icon: <Terminal size={14} /> },
+                                { id: 'metadata', label: '輸入輸出', icon: <Code size={14} /> },
+                                { id: 'history', label: '歷程', icon: <Clock size={14} /> }
                             ].map(tab => (
                                 <button
                                     key={tab.id}

@@ -1525,7 +1525,7 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                         color: threadFilter === statusKey ? 'var(--color-accent)' : 'var(--color-text-secondary)',
                       }}
                     >
-                      {statusKey === 'open' ? 'Open' : statusKey === 'resolved' ? 'Resolved' : 'All'}
+                      {statusKey === 'open' ? '開啟中' : statusKey === 'resolved' ? '已解決' : '全部'}
                     </button>
                   ))}
                 </div>
@@ -1601,7 +1601,7 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                                 borderColor: thread.status === 'resolved' ? 'var(--color-success)' : 'var(--color-warning)',
                               }}
                             >
-                              {thread.status === 'resolved' ? 'Resolved' : 'Open'}
+                              {thread.status === 'resolved' ? '已解決' : '開啟中'}
                             </span>
                           </div>
                         </div>

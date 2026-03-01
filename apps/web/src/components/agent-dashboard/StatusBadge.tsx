@@ -31,13 +31,13 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, label }) => {
 
     const styles = getStyles();
     const defaultLabels: Record<string, string> = {
-        COMPLETED: 'Completed',
-        FAILED: 'Failed',
-        WAITING: 'Waiting',
-        RUNNING: 'Running',
-        QUEUED: 'Queued',
-        SKIPPED: 'Skipped',
-        HUMAN_INPUT: 'Input Needed'
+        COMPLETED: '已完成',
+        FAILED: '失敗',
+        WAITING: '等待中',
+        RUNNING: '執行中',
+        QUEUED: '排隊中',
+        SKIPPED: '已跳過',
+        HUMAN_INPUT: '需要輸入'
     };
 
     return (
