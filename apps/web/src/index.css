@@ -182,6 +182,16 @@ body {
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ─────────────────────────────────────────────────────────
+   CMDK — Command Palette item highlight
+───────────────────────────────────────────────────────── */
+[cmdk-item][aria-selected="true"] > div {
+  background: var(--color-surface-secondary) !important;
+}
+[cmdk-item] { cursor: pointer; }
+[cmdk-group-heading] { padding: 0; }
+[cmdk-input] { font-family: inherit; }
+
+/* ─────────────────────────────────────────────────────────
    REDUCED MOTION
 ───────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {

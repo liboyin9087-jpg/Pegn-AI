@@ -14,6 +14,8 @@ import PageHeader from './components/PageHeader';
 import { DashboardShowcase } from './components/agent-dashboard/DashboardShowcase';
 import { CollectionView } from './components/database/CollectionView';
 import { useCollections, useCollectionViews } from './hooks/useCollections';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
 import {
   getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
@@ -50,19 +52,18 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiSheetOpen, setAiSheetOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [aiInitPrompt, setAiInitPrompt] = useState<string | undefined>();
 
-  // Global ⌘K shortcut
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setCmdOpen(o => !o);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
+  // Global keyboard shortcuts (⌘K, ⌘N, ⌘/, ⌘⇧A, ?)
+  // Use lambdas to avoid temporal dead zone when handleNewDoc is declared later.
+  useKeyboardShortcuts({
+    onOpenCommand: () => setCmdOpen(o => !o),
+    onNewDoc: () => handleNewDoc(),
+    onToggleSidebar: () => setSidebarOpen(o => !o),
+    onToggleAI: () => setAiSheetOpen(o => !o),
+    onShowHelp: () => setHelpOpen(o => !o),
+  });
 
   useEffect(() => {
     (async () => {
@@ -476,7 +477,12 @@ export default function App() {
         onNewDoc={handleNewDoc}
         onUpload={() => setShowUpload(true)}
         onOpenAI={() => handleOpenAI()}
+        onToggleSidebar={() => setSidebarOpen(o => !o)}
+        onShowShortcuts={() => { setCmdOpen(false); setHelpOpen(true); }}
       />
+
+      {/* Keyboard Help Modal */}
+      <KeyboardHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* AI Side Sheet */}
       <ErrorBoundary>
