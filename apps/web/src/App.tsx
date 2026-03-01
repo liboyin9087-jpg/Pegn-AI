@@ -615,6 +615,7 @@ export default function App() {
                 collection={activeCollection}
                 workspaceId={workspace?.id}
                 views={views}
+                collections={collections}
                 onUpdateView={() => { }}
                 onUpdateCollection={updated => setActiveCollection(updated)}
                 onOpenFullPage={rowId => {
