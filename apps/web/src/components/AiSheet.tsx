@@ -9,10 +9,10 @@ import KGPanel from './KGPanel';
 type Tab = 'chat' | 'search' | 'agent' | 'kg';
 
 const TABS: { id: Tab; icon: React.ElementType; label: string }[] = [
-  { id: 'chat',   icon: MessageSquare, label: 'Chat'   },
-  { id: 'search', icon: Search,        label: 'Search' },
+  { id: 'chat',   icon: MessageSquare, label: '對話'   },
+  { id: 'search', icon: Search,        label: '搜尋'   },
   { id: 'agent',  icon: Bot,           label: 'Agent'  },
-  { id: 'kg',     icon: GitFork,       label: 'Graph'  },
+  { id: 'kg',     icon: GitFork,       label: '知識圖' },
 ];
 
 interface Props {

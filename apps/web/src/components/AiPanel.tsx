@@ -17,10 +17,10 @@ interface Props {
 }
 
 const TABS = [
-  { id: 'chat',   label: 'Chat',   Icon: MessageSquare },
-  { id: 'search', label: 'Search', Icon: Search },
+  { id: 'chat',   label: '對話',   Icon: MessageSquare },
+  { id: 'search', label: '搜尋',   Icon: Search },
   { id: 'agent',  label: 'Agent',  Icon: Bot },
-  { id: 'kg',     label: 'Graph',  Icon: GitFork },
+  { id: 'kg',     label: '知識圖', Icon: GitFork },
 ] as const;
 
 export default function AiPanel({ workspaceId, activeDoc, tab, onTabChange, onNavigateDoc, onClose, isMobile }: Props) {
