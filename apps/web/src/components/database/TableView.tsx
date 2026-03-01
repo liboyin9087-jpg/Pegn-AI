@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Plus, Search, Filter, ArrowUpDown, MoreHorizontal, Hash, Type, Calendar, CheckSquare, Link, Mail, Phone } from 'lucide-react';
+import { Plus, Search, Filter, ArrowUpDown, MoreHorizontal, Hash, Type, Calendar, CheckSquare, Link, Mail, Phone, ExternalLink } from 'lucide-react';
 import { Collection, CollectionProperty } from '../../types/collection';
 
 interface TableViewProps {
@@ -8,6 +8,7 @@ interface TableViewProps {
     data: any[];
     onAddRow: () => void;
     onEditCell: (rowId: string, propertyId: string, value: any) => void;
+    onOpenRow?: (id: string) => void;
 }
 
 const PropertyIcon = ({ type }: { type: CollectionProperty['type'] }) => {
@@ -23,7 +24,7 @@ const PropertyIcon = ({ type }: { type: CollectionProperty['type'] }) => {
     }
 };
 
-export function TableView({ collection, data, onAddRow, onEditCell }: TableViewProps) {
+export function TableView({ collection, data, onAddRow, onEditCell, onOpenRow }: TableViewProps) {
     const properties = Object.entries(collection.schema.properties);
 
     return (
@@ -90,7 +91,18 @@ export function TableView({ collection, data, onAddRow, onEditCell }: TableViewP
                             >
                                 <td className="px-4 py-2.5 border-b border-r border-gray-100 text-center">
                                     <span className="text-gray-400 group-hover:hidden">{idx + 1}</span>
-                                    <div className="hidden group-hover:block mx-auto w-4 h-4 rounded border border-gray-300" />
+                                    <div className="hidden group-hover:flex items-center justify-center gap-1">
+                                        <div className="w-4 h-4 rounded border border-gray-300" />
+                                        {onOpenRow && (
+                                            <button
+                                                onClick={() => onOpenRow(row.id)}
+                                                className="text-gray-400 hover:text-accent transition-colors"
+                                                title="開啟詳情"
+                                            >
+                                                <ExternalLink size={12} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </td>
                                 {properties.map(([id, prop]) => (
                                     <td key={id} className="px-4 py-2.5 border-b border-r border-gray-100 align-top">

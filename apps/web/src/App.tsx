@@ -610,6 +610,11 @@ export default function App() {
                 workspaceId={workspace?.id}
                 views={views}
                 onUpdateView={() => { }}
+                onUpdateCollection={updated => setActiveCollection(updated)}
+                onOpenFullPage={rowId => {
+                  const doc = documents.find((d: any) => d.id === rowId);
+                  if (doc) { setActiveDoc(doc); setActiveCollection(null); }
+                }}
               />
             ) : (
               <div className="flex flex-col h-full overflow-y-auto">

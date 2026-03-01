@@ -522,6 +522,8 @@ export const createCollection = (data: { workspace_id?: string; workspaceId?: st
   api<any>('/collections', { method: 'POST', body: JSON.stringify({ ...data, workspace_id: data.workspace_id ?? data.workspaceId }) });
 export const updateCollection = (id: string, data: any) =>
   api<any>(`/collections/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+export const updateCollectionSchema = (id: string, schema: any) =>
+  api<any>(`/collections/${id}`, { method: 'PATCH', body: JSON.stringify({ schema }) });
 export const deleteCollection = (id: string) =>
   api<any>(`/collections/${id}`, { method: 'DELETE' });
 export const listCollectionDocuments = (id: string) =>
