@@ -642,6 +642,7 @@ export default function App() {
                     onFocusThreadHandled={() => setFocusThreadId(null)}
                     documents={documents}
                     onNavigateDoc={handleNavigateDoc}
+                    user={user ? { id: user.id, name: user.name, email: user.email } : undefined}
                   />
                 </div>
               </div>

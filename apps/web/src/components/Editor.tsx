@@ -21,6 +21,8 @@ import {
 } from '../api/client';
 import ShareModal from './ShareModal';
 import BacklinksPanel from './BacklinksPanel';
+import { usePresence } from '../hooks/usePresence';
+import { getToken } from '../api/client';
 
 interface Doc { id: string; title: string; content?: string; updatedAt?: string; }
 
@@ -32,6 +34,7 @@ interface Props {
   onFocusThreadHandled?: () => void;
   documents?: Doc[];
   onNavigateDoc?: (docId: string) => void;
+  user?: { id: string; name?: string; email?: string };
 }
 
 // ── Block Commands ──────────────────────────────────────────────────────────
@@ -629,7 +632,7 @@ function ToolbarDivider() {
 }
 
 // ── Main Editor ─────────────────────────────────────────────────────────────
-export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFocusThreadHandled, documents = [], onNavigateDoc }: Props) {
+export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFocusThreadHandled, documents = [], onNavigateDoc, user }: Props) {
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -649,6 +652,14 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
   // Wiki-link autocomplete ([[)
   const [wikiMenu, setWikiMenu] = useState<{ visible: boolean; x: number; y: number; query: string; selectedIndex: number; bracketStart: number }>({
     visible: false, x: 0, y: 0, query: '', selectedIndex: 0, bracketStart: -1,
+  });
+
+  // Real-time presence
+  const { users: presenceUsers } = usePresence({
+    documentId: doc?.id,
+    userId: user?.id,
+    userName: user?.name || user?.email?.split('@')[0] || '使用者',
+    token: getToken() ?? undefined,
   });
 
   // Inline AI
@@ -1386,6 +1397,28 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
             )}
           </AnimatePresence>
         </div>
+
+        {/* Presence avatars — other users viewing this document */}
+        {presenceUsers.length > 0 && (
+          <div className="flex items-center gap-1 ml-3">
+            {presenceUsers.slice(0, 5).map(u => (
+              <div
+                key={u.userId}
+                title={u.userName}
+                className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: u.color, fontSize: 10, fontWeight: 700, color: '#fff', border: '2px solid var(--color-surface)', marginLeft: -6 }}
+              >
+                {u.userName.slice(0, 1).toUpperCase()}
+              </div>
+            ))}
+            {presenceUsers.length > 5 && (
+              <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: 'var(--color-surface-tertiary)', fontSize: 9, color: 'var(--color-text-tertiary)', border: '2px solid var(--color-surface)', marginLeft: -6 }}>
+                +{presenceUsers.length - 5}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex-1" />
 
