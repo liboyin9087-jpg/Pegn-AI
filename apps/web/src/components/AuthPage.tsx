@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Eye, EyeOff, ArrowRight, Mail, Lock, User, AlertCircle, Sparkles } from 'lucide-react';
-import { login, register, setToken, oauthLogin, getOAuthStatus } from '../api/client';
+import { Eye, EyeOff, ArrowRight, Mail, Lock, User, AlertCircle, Sparkles, Smartphone } from 'lucide-react';
+import { login, register, setToken, oauthLogin, getOAuthStatus, requestPhoneOtp, verifyPhoneOtp } from '../api/client';
 
 interface Props {
   onAuth: (user: any) => void;
 }
 
 type Mode = 'login' | 'register';
+type AuthView = 'email' | 'phone' | 'otp';
 
 // ── SVG icons for OAuth providers ──────────────────────────────────────
 function GoogleIcon() {
@@ -38,9 +39,15 @@ const FEATURES = [
 
 export default function AuthPage({ onAuth }: Props) {
   const [mode, setMode] = useState<Mode>('login');
+  const [authView, setAuthView] = useState<AuthView>('email');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [otpRequestId, setOtpRequestId] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [retryAfter, setRetryAfter] = useState(0);
+  const [expiresIn, setExpiresIn] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOAuthLoading] = useState<'google' | 'github' | null>(null);
@@ -61,8 +68,18 @@ export default function AuthPage({ onAuth }: Props) {
     }
   }, []);
 
+  useEffect(() => {
+    if (authView !== 'otp') return;
+    const timer = window.setInterval(() => {
+      setRetryAfter((prev) => Math.max(0, prev - 1));
+      setExpiresIn((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [authView]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (authView !== 'email') return;
     setError('');
     setLoading(true);
     try {
@@ -83,13 +100,70 @@ export default function AuthPage({ onAuth }: Props) {
     }
   };
 
+  const handlePhoneRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const res = await requestPhoneOtp(phone);
+      setOtpRequestId(res.otp_request_id);
+      setRetryAfter(res.retry_after ?? 0);
+      setExpiresIn(res.expires_in ?? 0);
+      setOtpCode('');
+      setAuthView('otp');
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      if (msg.includes('404') || msg.includes('501') || msg.includes('failed')) {
+        setAuthView('email');
+        setError('手機驗證暫不可用，請改用 Email 登入');
+      } else if (msg.includes('429')) {
+        setError('發送太頻繁，請稍後重試');
+      } else {
+        setError('發送驗證碼失敗，請重試');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePhoneVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const res = await verifyPhoneOtp(otpRequestId, otpCode, phone);
+      setToken(res.token);
+      onAuth(res.user);
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      setError(
+        msg.includes('401') ? '驗證碼錯誤，請重新輸入'
+        : msg.includes('410') ? '驗證碼已過期，請重發'
+        : msg.includes('429') ? '嘗試次數過多，請稍後再試'
+        : '驗證失敗，請重試'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleOAuth = (provider: 'google' | 'github') => {
     setOAuthLoading(provider);
     oauthLogin(provider);
   };
 
   const switchMode = (m: Mode) => {
-    setMode(m); setError(''); setEmail(''); setPassword(''); setName('');
+    setMode(m);
+    setAuthView('email');
+    setError('');
+    setEmail('');
+    setPassword('');
+    setName('');
+    setPhone('');
+    setOtpRequestId('');
+    setOtpCode('');
+    setRetryAfter(0);
+    setExpiresIn(0);
   };
 
   const hasOAuth = oauthStatus.google || oauthStatus.github;
@@ -127,17 +201,23 @@ export default function AuthPage({ onAuth }: Props) {
                 transition={{ duration: 0.18 }}
               >
                 <h1 style={{ fontSize: 26, fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.6px', marginBottom: 6, lineHeight: 1.2 }}>
-                  {mode === 'login' ? '歡迎回來' : '建立你的帳號'}
+                  {authView === 'phone' ? '手機驗證登入' : authView === 'otp' ? '輸入驗證碼' : mode === 'login' ? '歡迎回來' : '建立你的帳號'}
                 </h1>
                 <p style={{ fontSize: 14, color: '#6b6b7a' }}>
-                  {mode === 'login' ? '登入以繼續你的工作區' : '立即開始建立 AI 知識庫'}
+                  {authView === 'phone'
+                    ? '輸入手機號碼，取得一次性驗證碼'
+                    : authView === 'otp'
+                      ? '請輸入 6 碼驗證碼完成登入'
+                      : mode === 'login'
+                        ? '登入以繼續你的工作區'
+                        : '立即開始建立 AI 知識庫'}
                 </p>
               </motion.div>
             </AnimatePresence>
           </div>
 
           {/* OAuth buttons */}
-          {hasOAuth && (
+          {hasOAuth && authView === 'email' && (
             <div className="flex flex-col gap-2.5 mb-6">
               {oauthStatus.google && (
                 <OAuthButton
@@ -166,63 +246,114 @@ export default function AuthPage({ onAuth }: Props) {
           )}
 
           {/* Email form */}
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <AnimatePresence initial={false}>
-              {mode === 'register' && (
-                <motion.div
-                  key="name"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2 }}
-                  style={{ overflow: 'hidden' }}
-                >
+          <form onSubmit={authView === 'email' ? handleSubmit : authView === 'phone' ? handlePhoneRequest : handlePhoneVerify} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {authView === 'email' ? (
+              <>
+                <AnimatePresence initial={false}>
+                  {mode === 'register' && (
+                    <motion.div
+                      key="name"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      style={{ overflow: 'hidden' }}
+                    >
+                      <InputField
+                        icon={<User size={14} />}
+                        type="text"
+                        placeholder="你的名字"
+                        value={name}
+                        onChange={setName}
+                        required
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <InputField
+                  icon={<Mail size={14} />}
+                  type="email"
+                  placeholder="your@email.com"
+                  value={email}
+                  onChange={setEmail}
+                  required
+                />
+
+                <div className="relative">
                   <InputField
-                    icon={<User size={14} />}
-                    type="text"
-                    placeholder="你的名字"
-                    value={name}
-                    onChange={setName}
+                    icon={<Lock size={14} />}
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="至少 6 個字元"
+                    value={password}
+                    onChange={setPassword}
                     required
+                    minLength={6}
+                    extraPaddingRight
                   />
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1"
+                    style={{ color: '#a0a0ae' }}
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
 
-            <InputField
-              icon={<Mail size={14} />}
-              type="email"
-              placeholder="your@email.com"
-              value={email}
-              onChange={setEmail}
-              required
-            />
-
-            <div className="relative">
+                {mode === 'login' && (
+                  <div className="flex justify-end" style={{ marginTop: -4 }}>
+                    <button type="button" style={{ fontSize: 12, color: '#2383e2' }}>忘記密碼？</button>
+                  </div>
+                )}
+              </>
+            ) : authView === 'phone' ? (
               <InputField
-                icon={<Lock size={14} />}
-                type={showPassword ? 'text' : 'password'}
-                placeholder="至少 6 個字元"
-                value={password}
-                onChange={setPassword}
+                icon={<Smartphone size={14} />}
+                type="tel"
+                placeholder="手機號碼（例：+886912345678）"
+                value={phone}
+                onChange={setPhone}
                 required
-                minLength={6}
-                extraPaddingRight
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1"
-                style={{ color: '#a0a0ae' }}
-              >
-                {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-
-            {mode === 'login' && (
-              <div className="flex justify-end" style={{ marginTop: -4 }}>
-                <button type="button" style={{ fontSize: 12, color: '#2383e2' }}>忘記密碼？</button>
-              </div>
+            ) : (
+              <>
+                <InputField
+                  icon={<Lock size={14} />}
+                  type="text"
+                  placeholder="6 碼驗證碼"
+                  value={otpCode}
+                  onChange={(v) => setOtpCode(v.replace(/\D/g, '').slice(0, 6))}
+                  required
+                  maxLength={6}
+                  inputMode="numeric"
+                />
+                <div className="flex items-center justify-between px-1" style={{ fontSize: 12, color: '#6b6b7a' }}>
+                  <span>驗證碼剩餘 {Math.max(0, expiresIn)} 秒</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (retryAfter > 0 || loading) return;
+                      setError('');
+                      setLoading(true);
+                      try {
+                        const res = await requestPhoneOtp(phone);
+                        setOtpRequestId(res.otp_request_id);
+                        setRetryAfter(res.retry_after ?? 0);
+                        setExpiresIn(res.expires_in ?? 0);
+                      } catch {
+                        setError('重發驗證碼失敗，請稍後再試');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    disabled={retryAfter > 0 || loading}
+                    style={{ color: retryAfter > 0 ? '#a0a0ae' : '#2383e2', fontWeight: 600 }}
+                  >
+                    {retryAfter > 0 ? `重發 (${retryAfter}s)` : '重發驗證碼'}
+                  </button>
+                </div>
+              </>
             )}
 
             <AnimatePresence>
@@ -245,7 +376,7 @@ export default function AuthPage({ onAuth }: Props) {
 
             <button
               type="submit"
-              disabled={loading || !!oauthLoading}
+              disabled={loading || !!oauthLoading || (authView === 'otp' && otpCode.length !== 6)}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white"
               style={{
                 fontSize: 14, fontWeight: 600, marginTop: 4,
@@ -258,22 +389,58 @@ export default function AuthPage({ onAuth }: Props) {
             >
               {loading
                 ? <Spinner color="border-white/40" />
-                : <><span>{mode === 'login' ? '登入' : '建立帳號'}</span><ArrowRight size={15} /></>
+                : <>
+                    <span>
+                      {authView === 'phone' ? '發送驗證碼' : authView === 'otp' ? '驗證並登入' : mode === 'login' ? '登入' : '建立帳號'}
+                    </span>
+                    <ArrowRight size={15} />
+                  </>
               }
             </button>
+
+            {mode === 'login' && authView === 'email' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setAuthView('phone');
+                }}
+                className="w-full py-2.5 rounded-xl border"
+                style={{ fontSize: 13, fontWeight: 600, borderColor: '#e8e8ea', color: '#2383e2', background: 'white' }}
+              >
+                改用手機驗證碼登入
+              </button>
+            )}
+
+            {authView !== 'email' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthView('email');
+                  setError('');
+                  setOtpCode('');
+                }}
+                className="w-full py-2.5 rounded-xl border"
+                style={{ fontSize: 13, fontWeight: 600, borderColor: '#e8e8ea', color: '#6b6b7a', background: 'white' }}
+              >
+                返回 Email 登入
+              </button>
+            )}
           </form>
 
           {/* Switch mode */}
-          <p className="text-center mt-6" style={{ fontSize: 13, color: '#6b6b7a' }}>
-            {mode === 'login' ? '還沒有帳號？' : '已有帳號？'}
-            {' '}
-            <button
-              onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
-              style={{ color: '#2383e2', fontWeight: 600 }}
-            >
-              {mode === 'login' ? '免費註冊' : '立即登入'}
-            </button>
-          </p>
+          {authView === 'email' && (
+            <p className="text-center mt-6" style={{ fontSize: 13, color: '#6b6b7a' }}>
+              {mode === 'login' ? '還沒有帳號？' : '已有帳號？'}
+              {' '}
+              <button
+                onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
+                style={{ color: '#2383e2', fontWeight: 600 }}
+              >
+                {mode === 'login' ? '免費註冊' : '立即登入'}
+              </button>
+            </p>
+          )}
 
           <p className="text-center mt-4" style={{ fontSize: 11, color: '#b0b0be' }}>
             繼續使用即代表同意
@@ -452,9 +619,11 @@ interface InputFieldProps {
   required?: boolean;
   minLength?: number;
   extraPaddingRight?: boolean;
+  maxLength?: number;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
 }
 
-function InputField({ icon, type, placeholder, value, onChange, required, minLength, extraPaddingRight }: InputFieldProps) {
+function InputField({ icon, type, placeholder, value, onChange, required, minLength, extraPaddingRight, maxLength, inputMode }: InputFieldProps) {
   const [focused, setFocused] = useState(false);
   return (
     <div
@@ -475,6 +644,8 @@ function InputField({ icon, type, placeholder, value, onChange, required, minLen
         onChange={e => onChange(e.target.value)}
         required={required}
         minLength={minLength}
+        maxLength={maxLength}
+        inputMode={inputMode}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className="flex-1 outline-none bg-transparent"

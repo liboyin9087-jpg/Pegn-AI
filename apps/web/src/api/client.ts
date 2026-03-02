@@ -240,6 +240,39 @@ export const login = (email: string, password: string) =>
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
+export interface PhoneOtpRequestResponse {
+  request_id: string;
+  otp_request_id: string;
+  channel: 'sms';
+  expires_in: number;
+  retry_after: number;
+  stub: boolean;
+  debug_code?: string;
+}
+
+export interface PhoneOtpVerifyResponse {
+  request_id: string;
+  auth_method: 'phone_otp';
+  token: string;
+  user: any;
+}
+
+export const requestPhoneOtp = (phone: string) =>
+  api<PhoneOtpRequestResponse>('/auth/phone/request', {
+    method: 'POST',
+    body: JSON.stringify({ phone }),
+  });
+
+export const verifyPhoneOtp = (otpRequestId: string, code: string, phone?: string) =>
+  api<PhoneOtpVerifyResponse>('/auth/phone/verify', {
+    method: 'POST',
+    body: JSON.stringify({
+      otp_request_id: otpRequestId,
+      code,
+      ...(phone ? { phone } : {}),
+    }),
+  });
+
 export const getMe = () => api<{ user: any }>('/auth/me');
 
 // ── Workspace ────────────────────────────────────────────────
