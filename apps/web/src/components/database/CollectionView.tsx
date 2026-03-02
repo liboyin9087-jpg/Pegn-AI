@@ -188,41 +188,56 @@ export function CollectionView({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-white">
-      {/* View Tabs */}
-      <div className="flex items-center gap-1 px-4 pt-4 border-b border-gray-100 flex-shrink-0">
-        {views.map(view => (
-          <button
-            key={view.id}
-            onClick={() => setActiveViewId(view.id)}
-            className={`
-              flex items-center gap-1.5 px-3 py-2 rounded-t-lg text-sm font-medium transition-all relative
-              ${activeViewId === view.id ? 'text-accent' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}
-            `}
-          >
-            <ViewIcon type={view.type} />
-            {view.name}
-            {activeViewId === view.id && (
-              <motion.div
-                layoutId="activeViewTab"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent"
-              />
-            )}
-          </button>
-        ))}
+    <div className="flex flex-col h-full overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+      {/* View Tabs — Notion-style bottom-border tabs */}
+      <div
+        className="flex items-end flex-shrink-0"
+        style={{ borderBottom: '1px solid var(--color-border)', padding: '0 16px' }}
+      >
+        {views.map(view => {
+          const isActive = activeViewId === view.id;
+          return (
+            <button
+              key={view.id}
+              onClick={() => setActiveViewId(view.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 12px', fontSize: 13, fontWeight: 500,
+                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                background: 'none', border: 'none', cursor: 'pointer',
+                borderBottom: `2px solid ${isActive ? 'var(--color-text-primary)' : 'transparent'}`,
+                marginBottom: -1,
+                transition: 'color 0.1s, border-color 0.1s',
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+              onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+            >
+              <ViewIcon type={view.type} />
+              {view.name}
+            </button>
+          );
+        })}
 
-        <div className="ml-auto flex items-center gap-1 mr-1">
+        <div className="ml-auto flex items-center gap-1" style={{ paddingBottom: 4 }}>
           <button
             onClick={handleExport}
-            className="p-2 text-gray-400 hover:text-accent hover:bg-gray-50 rounded-lg transition-colors"
+            style={{ padding: 6, color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 6, display: 'flex' }}
             title="導出資料"
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
           >
             <Download size={14} />
           </button>
           <button
             onClick={() => setShowSchemaEditor(v => !v)}
-            className={`p-2 rounded-lg transition-colors ${showSchemaEditor ? 'text-accent bg-blue-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
+            style={{
+              padding: 6, background: showSchemaEditor ? 'var(--color-accent-light)' : 'none',
+              color: showSchemaEditor ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              border: 'none', cursor: 'pointer', borderRadius: 6, display: 'flex',
+            }}
             title="編輯 Schema"
+            onMouseEnter={e => { if (!showSchemaEditor) { e.currentTarget.style.background = 'var(--color-surface-secondary)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; } }}
+            onMouseLeave={e => { if (!showSchemaEditor) { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--color-text-tertiary)'; } }}
           >
             <Settings2 size={14} />
           </button>

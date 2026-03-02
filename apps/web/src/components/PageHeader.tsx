@@ -197,7 +197,7 @@ export default function PageHeader({
   if (!doc) return null;
 
   return (
-    <div className="flex-shrink-0" style={{ borderBottom: '1px solid var(--color-border)' }}>
+    <div className="flex-shrink-0" style={{ background: 'var(--color-surface)' }}>
       {/* Cover strip */}
       <div
         className="relative group w-full overflow-hidden"
@@ -246,8 +246,8 @@ export default function PageHeader({
         </AnimatePresence>
       </div>
 
-      {/* Content area */}
-      <div className="px-12 pt-4 pb-3" style={{ maxWidth: 900 }}>
+      {/* Content area — same max-width as Editor, auto-centered */}
+      <div style={{ maxWidth: 900, margin: '0 auto', padding: '16px 96px 12px' }}>
         {/* Breadcrumb */}
         {ancestors.length > 0 && (
           <div className="mb-2">

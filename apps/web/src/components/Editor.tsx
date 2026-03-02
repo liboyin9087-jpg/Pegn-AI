@@ -1473,14 +1473,14 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
       {/* Document area */}
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-auto" onMouseUp={handleSelect}>
-          <div className="max-w-2xl mx-auto px-10 pt-12 pb-24">
+          <div style={{ maxWidth: 900, margin: '0 auto', padding: '40px 96px 96px' }}>
             {/* Emoji + Title */}
             <div className="mb-2">
               <span className="text-4xl select-none" style={{ cursor: 'default' }}>
                 {doc.metadata?.source === 'upload' ? '📄' : '📝'}
               </span>
             </div>
-            <h1 className="leading-tight mb-3" style={{ fontSize: 36, fontWeight: 700, color: '#1a1a2e', letterSpacing: '-0.8px', lineHeight: 1.15 }}>
+            <h1 className="leading-tight mb-3" style={{ fontSize: 36, fontWeight: 700, color: 'var(--color-text-primary)', letterSpacing: '-0.6px', lineHeight: 1.15 }}>
               {doc.title}
             </h1>
 
@@ -1514,7 +1514,7 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
                   className="w-full bg-transparent resize-none outline-none"
                   style={{ fontSize: 15, color: 'var(--color-text-primary)', lineHeight: 1.85, minHeight: 480, caretColor: 'var(--color-accent)' }}
-                  placeholder={`開始輸入...\n\n支援 Markdown：# 標題  **粗體**  *斜體*  - 列表  - [ ] 任務  \`code\`\n\n輸入 / 喚醒 Block 選單 · 選取文字呼叫 AI`}
+                  placeholder={`輸入 '/' 插入區塊，或直接開始撰寫...`}
                   onChange={handleTextareaInput}
                   onKeyDown={handleKeyDown}
                   defaultValue={content}

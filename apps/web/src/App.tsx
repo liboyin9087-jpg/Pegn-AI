@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { PanelLeft, Sparkles } from 'lucide-react';
+import { PanelLeft, Sparkles, Moon, Sun } from 'lucide-react';
 import AuthPage from './components/AuthPage';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
@@ -54,6 +54,12 @@ export default function App() {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [aiInitPrompt, setAiInitPrompt] = useState<string | undefined>();
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('pegn-theme') === 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    localStorage.setItem('pegn-theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   // Global keyboard shortcuts (⌘K, ⌘N, ⌘/, ⌘⇧A, ?)
   // Use lambdas to avoid temporal dead zone when handleNewDoc is declared later.
@@ -442,7 +448,7 @@ export default function App() {
   if (!user) return <AuthPage onAuth={handleAuth} />;
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'white' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--color-surface)' }}>
       {/* Modals */}
       {showOnboarding && (
         <OnboardingModal
@@ -542,7 +548,7 @@ export default function App() {
         {/* Top bar */}
         <div
           className="flex items-center justify-between px-3 flex-shrink-0"
-          style={{ height: 44, borderBottom: '1px solid #e8e8ea', background: 'white' }}
+          style={{ height: 44, borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
         >
           <div className="flex items-center gap-1.5">
             <button
@@ -555,50 +561,77 @@ export default function App() {
             >
               <PanelLeft size={16} />
             </button>
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-1" style={{ fontSize: 13, color: '#a0a0ae' }}>
-              <span>{workspace?.name ?? 'My Workspace'}</span>
+            {/* Breadcrumb — shows workspace › ancestors › current page (with emoji) */}
+            <div className="flex items-center gap-0.5" style={{ fontSize: 13, color: 'var(--color-text-tertiary)', minWidth: 0 }}>
+              <span style={{ flexShrink: 0 }}>{workspace?.name ?? 'My Workspace'}</span>
+              {activeDoc && getAncestors(activeDoc.id).map(a => (
+                <React.Fragment key={a.id}>
+                  <span style={{ color: 'var(--color-text-quaternary)', margin: '0 1px', flexShrink: 0 }}>›</span>
+                  <button
+                    onClick={() => handleNavigateDoc(a.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 3, color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 5px', borderRadius: 4, flexShrink: 0 }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+                  >
+                    {a.icon && <span>{a.icon}</span>}
+                    <span>{a.title}</span>
+                  </button>
+                </React.Fragment>
+              ))}
               {activeDoc && (
                 <>
-                  <span>/</span>
-                  <span style={{ color: '#37352f', fontWeight: 450 }}>{activeDoc.title}</span>
+                  <span style={{ color: 'var(--color-text-quaternary)', margin: '0 1px', flexShrink: 0 }}>›</span>
+                  <span style={{ color: 'var(--color-text-primary)', fontWeight: 450, display: 'flex', alignItems: 'center', gap: 3, overflow: 'hidden' }}>
+                    {activeDoc.metadata?.icon && <span style={{ flexShrink: 0 }}>{activeDoc.metadata.icon}</span>}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeDoc.title}</span>
+                  </span>
                 </>
               )}
               {activeCollection && (
                 <>
-                  <span>/</span>
-                  <span style={{ color: '#37352f', fontWeight: 450 }}>{activeCollection.name}</span>
+                  <span style={{ color: 'var(--color-text-quaternary)', margin: '0 1px' }}>›</span>
+                  <span style={{ color: 'var(--color-text-primary)', fontWeight: 450 }}>{activeCollection.name}</span>
                 </>
               )}
             </div>
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Online status — minimal dot indicator */}
             <div
-              className="text-[11px] px-2 py-1 rounded-md"
-              style={{
-                background: isOnline ? '#eef9f1' : '#fff4e5',
-                color: isOnline ? '#1e7a3b' : '#b26a00',
-              }}
+              className="flex items-center gap-1"
+              title={isOnline ? `連線中${offlineQueueDepth > 0 ? `，待同步 ${offlineQueueDepth} 筆` : ''}` : '離線中'}
+              style={{ padding: '0 4px' }}
             >
-              {isOnline ? 'Online' : 'Offline'} · 待同步 {offlineQueueDepth}
+              <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: isOnline ? '#0a7a4c' : '#b87309' }} />
+              {offlineQueueDepth > 0 && (
+                <span style={{ fontSize: 11, color: '#b87309', fontWeight: 500 }}>{offlineQueueDepth}</span>
+              )}
             </div>
             {!showOnboarding && (
               <button
                 onClick={() => setShowOnboarding(true)}
                 className="text-xs px-2.5 py-1.5 rounded-lg transition-colors"
-                style={{ color: '#a0a0ae' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#f4f5f7'; e.currentTarget.style.color = '#6b6b7a'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#a0a0ae'; }}
+                style={{ color: 'var(--color-text-tertiary)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
               >說明</button>
             )}
+            {/* Dark mode toggle */}
+            <button
+              onClick={() => setDarkMode(d => !d)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors"
+              style={{ color: 'var(--color-text-secondary)' }}
+              title={darkMode ? '切換亮色模式' : '切換深色模式'}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              {darkMode ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
             <button
               onClick={() => handleOpenAI()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white transition-opacity"
-              style={{
-                fontSize: 12, fontWeight: 500,
-                background: 'linear-gradient(135deg, #2383e2, #7c3aed)',
-              }}
+              style={{ fontSize: 12, fontWeight: 500, background: 'linear-gradient(135deg, #2383e2, #7c3aed)' }}
               onMouseEnter={e => { e.currentTarget.style.opacity = '0.88'; }}
               onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
             >
@@ -610,43 +643,55 @@ export default function App() {
 
         <div className="flex-1 overflow-hidden flex flex-col">
           <ErrorBoundary>
-            {activeCollection ? (
-              <CollectionView
-                collection={activeCollection}
-                workspaceId={workspace?.id}
-                views={views}
-                collections={collections}
-                onUpdateView={() => { }}
-                onUpdateCollection={updated => setActiveCollection(updated)}
-                onOpenFullPage={rowId => {
-                  const doc = documents.find((d: any) => d.id === rowId);
-                  if (doc) { setActiveDoc(doc); setActiveCollection(null); }
-                }}
-              />
-            ) : (
-              <div className="flex flex-col h-full overflow-y-auto">
-                <PageHeader
-                  doc={activeDoc}
-                  ancestors={activeDoc ? getAncestors(activeDoc.id) : []}
-                  onChangeIcon={icon => activeDoc && handleUpdateDocMeta(activeDoc.id, { icon })}
-                  onChangeCover={cover => activeDoc && handleUpdateDocMeta(activeDoc.id, { cover })}
-                  onChangeTitle={title => activeDoc && handleRenameDoc(activeDoc.id, title)}
-                  onNavigate={handleNavigateDoc}
-                />
-                <div className="flex-1">
-                  <Editor
-                    doc={activeDoc}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeDoc?.id ?? (activeCollection ? `col-${activeCollection.id}` : 'empty')}
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12, ease: [0, 0, 0.2, 1] }}
+                className="flex-1 min-h-0 flex flex-col"
+                style={{ overflow: 'hidden' }}
+              >
+                {activeCollection ? (
+                  <CollectionView
+                    collection={activeCollection}
                     workspaceId={workspace?.id}
-                    onOpenAI={handleOpenAI}
-                    focusThreadId={focusThreadId}
-                    onFocusThreadHandled={() => setFocusThreadId(null)}
-                    documents={documents}
-                    onNavigateDoc={handleNavigateDoc}
-                    user={user ? { id: user.id, name: user.name, email: user.email } : undefined}
+                    views={views}
+                    collections={collections}
+                    onUpdateView={() => { }}
+                    onUpdateCollection={updated => setActiveCollection(updated)}
+                    onOpenFullPage={rowId => {
+                      const doc = documents.find((d: any) => d.id === rowId);
+                      if (doc) { setActiveDoc(doc); setActiveCollection(null); }
+                    }}
                   />
-                </div>
-              </div>
-            )}
+                ) : (
+                  <div className="flex flex-col h-full overflow-y-auto">
+                    <PageHeader
+                      doc={activeDoc}
+                      ancestors={activeDoc ? getAncestors(activeDoc.id) : []}
+                      onChangeIcon={icon => activeDoc && handleUpdateDocMeta(activeDoc.id, { icon })}
+                      onChangeCover={cover => activeDoc && handleUpdateDocMeta(activeDoc.id, { cover })}
+                      onChangeTitle={title => activeDoc && handleRenameDoc(activeDoc.id, title)}
+                      onNavigate={handleNavigateDoc}
+                    />
+                    <div className="flex-1">
+                      <Editor
+                        doc={activeDoc}
+                        workspaceId={workspace?.id}
+                        onOpenAI={handleOpenAI}
+                        focusThreadId={focusThreadId}
+                        onFocusThreadHandled={() => setFocusThreadId(null)}
+                        documents={documents}
+                        onNavigateDoc={handleNavigateDoc}
+                        user={user ? { id: user.id, name: user.name, email: user.email } : undefined}
+                      />
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </ErrorBoundary>
         </div>
       </main>
