@@ -278,6 +278,8 @@ export default function AuthPage({ onAuth }: Props) {
                   value={email}
                   onChange={setEmail}
                   required
+                  ariaLabel="Email"
+                  autoComplete="email"
                 />
 
                 <div className="relative">
@@ -290,6 +292,8 @@ export default function AuthPage({ onAuth }: Props) {
                     required
                     minLength={6}
                     extraPaddingRight
+                    ariaLabel="Password"
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   />
                   <button
                     type="button"
@@ -315,6 +319,8 @@ export default function AuthPage({ onAuth }: Props) {
                 value={phone}
                 onChange={setPhone}
                 required
+                ariaLabel="Phone number"
+                autoComplete="tel"
               />
             ) : (
               <>
@@ -327,6 +333,10 @@ export default function AuthPage({ onAuth }: Props) {
                   required
                   maxLength={6}
                   inputMode="numeric"
+                  ariaLabel="OTP code"
+                  ariaInvalid={Boolean(error)}
+                  ariaDescribedBy={error ? 'auth-error' : undefined}
+                  autoComplete="one-time-code"
                 />
                 <div className="flex items-center justify-between px-1" style={{ fontSize: 12, color: '#6b6b7a' }}>
                   <span>驗證碼剩餘 {Math.max(0, expiresIn)} 秒</span>
@@ -365,7 +375,7 @@ export default function AuthPage({ onAuth }: Props) {
                   transition={{ duration: 0.15 }}
                   style={{ overflow: 'hidden' }}
                 >
-                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl"
+                  <div id="auth-error" role="alert" aria-live="polite" className="flex items-start gap-2 px-3 py-2.5 rounded-xl"
                     style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
                     <AlertCircle size={13} style={{ color: '#dc2626', flexShrink: 0, marginTop: 1 }} />
                     <span style={{ fontSize: 12.5, color: '#dc2626', lineHeight: 1.5 }}>{error}</span>
@@ -377,6 +387,7 @@ export default function AuthPage({ onAuth }: Props) {
             <button
               type="submit"
               disabled={loading || !!oauthLoading || (authView === 'otp' && otpCode.length !== 6)}
+              aria-busy={loading}
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white"
               style={{
                 fontSize: 14, fontWeight: 600, marginTop: 4,
@@ -621,9 +632,13 @@ interface InputFieldProps {
   extraPaddingRight?: boolean;
   maxLength?: number;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
+  ariaLabel?: string;
+  ariaInvalid?: boolean;
+  ariaDescribedBy?: string;
+  autoComplete?: string;
 }
 
-function InputField({ icon, type, placeholder, value, onChange, required, minLength, extraPaddingRight, maxLength, inputMode }: InputFieldProps) {
+function InputField({ icon, type, placeholder, value, onChange, required, minLength, extraPaddingRight, maxLength, inputMode, ariaLabel, ariaInvalid, ariaDescribedBy, autoComplete }: InputFieldProps) {
   const [focused, setFocused] = useState(false);
   return (
     <div
@@ -646,6 +661,10 @@ function InputField({ icon, type, placeholder, value, onChange, required, minLen
         minLength={minLength}
         maxLength={maxLength}
         inputMode={inputMode}
+        aria-label={ariaLabel}
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
+        autoComplete={autoComplete}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className="flex-1 outline-none bg-transparent"
