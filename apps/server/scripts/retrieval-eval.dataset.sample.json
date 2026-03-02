@@ -1,0 +1,12 @@
+[
+  {
+    "query": "onboarding checklist",
+    "workspace_id": "workspace-id-1",
+    "relevant_document_ids": ["doc-id-1", "doc-id-2"]
+  },
+  {
+    "query": "quarterly planning notes",
+    "workspace_id": "workspace-id-1",
+    "relevant_document_ids": ["doc-id-3"]
+  }
+]
