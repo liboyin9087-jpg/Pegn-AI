@@ -74,6 +74,9 @@ services:
       dockerfile: Dockerfile
     ports:
       - "80:80"
+    environment:
+      PORT: "80"
+      API_UPSTREAM: http://api:4000
     depends_on:
       api:
         condition: service_healthy

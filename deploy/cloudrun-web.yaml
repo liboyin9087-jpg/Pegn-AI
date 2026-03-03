@@ -1,0 +1,34 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: pegn-ai-web
+  labels:
+    cloud.googleapis.com/location: asia-east1
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+        run.googleapis.com/cpu-throttling: "true"
+    spec:
+      containerConcurrency: 100
+      timeoutSeconds: 30
+      containers:
+        - image: asia-east1-docker.pkg.dev/PROJECT_ID/pegn-ai/web:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: NODE_ENV
+              value: production
+            # Set this to your actual API Cloud Run URL after first deploy
+            - name: API_UPSTREAM
+              value: https://pegn-ai-api-REPLACE.a.run.app
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
