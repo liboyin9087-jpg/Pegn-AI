@@ -6,7 +6,7 @@
 
 - **Branch**: `claude/review-core-features-M27dd`
 - **Phase**: Phase 2 完成（已合併最新 origin/main）
-- **最後 commit**: `4ac048d` merge: 解決 prompt-ops.ts 衝突，整合 LLMProvider 抽象層
+- **最後 commit**: `2b8be68` feat(p2): recursive multi-agent, cost governance, regression test matrix
 
 ## 專案架構
 
@@ -243,7 +243,10 @@ PROMPT_OPS_LLM_PROVIDER=auto # auto/gemini/openai/claude (預設 auto)
 CLAUDE_MODEL=claude-3-5-sonnet-20241022  # 預設模型
 ```
 
-- [ ] 多租戶資料隔離（Row-Level Security）
+### 已完成 P2 項目 (本 session)
+- [x] P2-1: 多代理 Supervisor-Worker 遞迴拆解 (`runWorkerWithRecursion` in `agent.ts`, `MAX_RECURSION_DEPTH=1`, LLM decomposition, sub-workers at positions `parentPos*10+i`, `mode_used='recursive'`)
+- [x] P2-2: 容量治理 (`LLM_COST_PER_1K_TOKENS`, `estimateUsdCost()`, `checkCostAlert()` in `quota.ts`; `GET /api/v1/billing/cost-alert`; `cost_estimate_usd` in `getWorkspaceUsage()`)
+- [x] P2-3: 平台化回歸測試矩陣 (`quota.test.ts` +4 describe groups, `health.test.ts` 5 cases, `billing.test.ts` 10 cases; 44 tests 0 failures)
 - [ ] 即時協作（WebSocket / CRDT）
 - [ ] 向量搜尋（pgvector）
 - [ ] 完整可觀測性（OpenTelemetry）
