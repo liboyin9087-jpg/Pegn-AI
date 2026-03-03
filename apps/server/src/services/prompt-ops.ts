@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
 
@@ -71,6 +73,52 @@ class GeminiLLMProvider implements LLMProvider {
   }
 }
 
+class OpenAILLMProvider implements LLMProvider {
+  readonly name = 'openai';
+  private client: OpenAI;
+  private modelName: string;
+
+  constructor(apiKey: string, modelName: string) {
+    this.client = new OpenAI({ apiKey });
+    this.modelName = modelName;
+  }
+
+  async generate(prompt: string, input: string): Promise<string> {
+    const completion = await this.client.chat.completions.create({
+      model: this.modelName,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: input },
+      ],
+    });
+
+    return completion.choices[0]?.message?.content ?? '';
+  }
+}
+
+class ClaudeLLMProvider implements LLMProvider {
+  readonly name = 'claude';
+  private client: Anthropic;
+  private modelName: string;
+
+  constructor(apiKey: string, modelName: string) {
+    this.client = new Anthropic({ apiKey });
+    this.modelName = modelName;
+  }
+
+  async generate(prompt: string, input: string): Promise<string> {
+    const message = await this.client.messages.create({
+      model: this.modelName,
+      max_tokens: 4096,
+      messages: [
+        { role: 'user', content: `${prompt}\n\nInput:\n${input}` },
+      ],
+    });
+    const block = message.content[0];
+    return block?.type === 'text' ? block.text : '';
+  }
+}
+
 export class PromptOpsService {
   private prompts: Map<string, Prompt> = new Map();
   private tests: Map<string, PromptTest[]> = new Map();
@@ -83,16 +131,39 @@ export class PromptOpsService {
 
   private createLLMProvider(): LLMProvider {
     const preferred = String(process.env.PROMPT_OPS_LLM_PROVIDER ?? 'auto').toLowerCase();
-    const apiKey = process.env.GEMINI_API_KEY;
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    const geminiModelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    const openAiApiKey = process.env.OPENAI_API_KEY;
+    const openAiModelName = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+    const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    const claudeModelName = process.env.CLAUDE_MODEL ?? 'claude-3-5-sonnet-20241022';
 
-    if ((preferred === 'gemini' || preferred === 'auto') && apiKey) {
-      observability.info('PromptOps LLM provider initialized', { provider: 'gemini', modelName });
-      return new GeminiLLMProvider(apiKey, modelName);
+    if ((preferred === 'claude') && anthropicApiKey) {
+      observability.info('PromptOps LLM provider initialized', { provider: 'claude', modelName: claudeModelName });
+      return new ClaudeLLMProvider(anthropicApiKey, claudeModelName);
     }
 
-    if (preferred === 'gemini' && !apiKey) {
+    if ((preferred === 'gemini' || preferred === 'auto') && geminiApiKey) {
+      observability.info('PromptOps LLM provider initialized', { provider: 'gemini', modelName: geminiModelName });
+      return new GeminiLLMProvider(geminiApiKey, geminiModelName);
+    }
+
+    if ((preferred === 'openai' || preferred === 'auto') && openAiApiKey) {
+      observability.info('PromptOps LLM provider initialized', { provider: 'openai', modelName: openAiModelName });
+      return new OpenAILLMProvider(openAiApiKey, openAiModelName);
+    }
+
+    if ((preferred === 'auto') && anthropicApiKey) {
+      observability.info('PromptOps LLM provider initialized', { provider: 'claude', modelName: claudeModelName });
+      return new ClaudeLLMProvider(anthropicApiKey, claudeModelName);
+    }
+
+    if (preferred === 'claude' && !anthropicApiKey) {
+      observability.warn('PromptOps provider fallback to mock due to missing ANTHROPIC_API_KEY', { preferred });
+    } else if (preferred === 'gemini' && !geminiApiKey) {
       observability.warn('PromptOps provider fallback to mock due to missing GEMINI_API_KEY', { preferred });
+    } else if (preferred === 'openai' && !openAiApiKey) {
+      observability.warn('PromptOps provider fallback to mock due to missing OPENAI_API_KEY', { preferred });
     }
 
     observability.info('PromptOps LLM provider initialized', { provider: 'mock' });

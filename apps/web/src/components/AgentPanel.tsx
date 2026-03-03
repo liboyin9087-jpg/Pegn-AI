@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { startResearchAgent, startSummarizeAgent, startSupervisorAgent, getToken, api } from '../api/client';
+import { startResearchAgent, startSummarizeAgent, startSupervisorAgent, getToken, api, ApiError } from '../api/client';
 
 const STATUS_COLOR: Record<string, string> = {
   pending: 'text-text-tertiary',
@@ -12,6 +12,14 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 type AgentMode = 'research' | 'summarize' | 'brainstorm' | 'outline';
+
+function getApiBaseUrl(): string {
+  const fromEnv = import.meta.env.VITE_API_URL;
+  if (fromEnv && String(fromEnv).trim().length > 0) {
+    return String(fromEnv).replace(/\/$/, '');
+  }
+  return window.location.origin;
+}
 
 const MODE_CONFIG: Record<AgentMode, { icon: string; label: string; placeholder: string; desc: string }> = {
   research:   { icon: '🔬', label: 'Research',   placeholder: '輸入研究問題或主題...',    desc: '深度研究並整合知識庫資料' },
@@ -45,6 +53,7 @@ export default function AgentPanel({
   const [input, setInput] = useState('');
   const [run, setRun] = useState<RunState | null>(null);
   const [loading, setLoading] = useState(false);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const abortRef = useRef<(() => void) | null>(null);
@@ -55,6 +64,7 @@ export default function AgentPanel({
     setSaved(false);
     setRun(null);
     setStreamingAnswer('');
+    setQuotaError(null);
 
     // Abort previous SSE
     abortRef.current?.();
@@ -75,7 +85,8 @@ export default function AgentPanel({
 
       // Connect via SSE for real-time updates
       const token = getToken();
-      const url = `http://localhost:4000/api/v1/agents/runs/${runId}/stream${token ? `?token=${token}` : ''}`;
+      const apiBase = getApiBaseUrl();
+      const url = `${apiBase}/api/v1/agents/runs/${runId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
       const es = new EventSource(url);
 
       abortRef.current = () => es.close();
@@ -122,6 +133,14 @@ export default function AgentPanel({
 
     } catch (err) {
       setLoading(false);
+      if (err instanceof ApiError && err.status === 429) {
+        const body = err.body as any;
+        const limit = body?.quota?.limit ?? '?';
+        const used = body?.quota?.used ?? '?';
+        setQuotaError(`今日 Agent 執行次數已達上限（${used}/${limit}），請明天再試或聯絡管理員升級配額。`);
+      } else if (err instanceof Error) {
+        setQuotaError(`執行失敗：${err.message}`);
+      }
     }
   }, [input, workspaceId, loading, mode]);
 
@@ -180,6 +199,21 @@ export default function AgentPanel({
 
       {/* 當前模式說明 */}
       <p className="text-xs text-text-tertiary -mt-1 px-1">{MODE_CONFIG[mode].desc}</p>
+
+      {/* Quota 超限提示 */}
+      {quotaError && (
+        <div className="flex items-start gap-2 bg-error/10 border border-error/30 rounded-xl px-3 py-2.5">
+          <span className="text-error text-base flex-shrink-0">⚠️</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-error mb-0.5">執行配額已達上限</p>
+            <p className="text-xs text-error/80 leading-relaxed">{quotaError}</p>
+          </div>
+          <button
+            onClick={() => setQuotaError(null)}
+            className="text-error/60 hover:text-error flex-shrink-0 text-xs"
+          >✕</button>
+        </div>
+      )}
 
       {/* 輸入 */}
       <div className="space-y-2">

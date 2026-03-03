@@ -50,6 +50,15 @@ import { versionsRouter } from './routes/versions.js';
 import { automationsRouter } from './routes/automations.js';
 import { startScheduler } from './services/automation.js';
 
+const appRole = (process.env.APP_ROLE ?? 'all').toLowerCase();
+const runApi = appRole === 'all' || appRole === 'api';
+const runSync = appRole === 'all' || appRole === 'sync';
+
+if (!runApi && !runSync) {
+  console.error('[FATAL] APP_ROLE must be one of: all, api, sync');
+  process.exit(1);
+}
+
 const app = express();
 app.use(cors({
   origin: (origin, cb) => {
@@ -154,30 +163,36 @@ app.get('/health/detailed', async (req, res) => {
   }
 });
 
-const apiPort = Number(process.env.API_PORT ?? 4000);
+const apiPort = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
 
 const httpServer = createServer(app);
 
-// ── WebSocket presence server ──────────────────────────────────────────────
-setupWebSocketServer(httpServer);
+if (runApi) {
+  // ── WebSocket presence server ────────────────────────────────────────────
+  setupWebSocketServer(httpServer);
 
-httpServer.listen(apiPort, () => {
-  console.log(`[api] listening on http://localhost:${apiPort}`);
-  observability.info('API server started', { port: apiPort });
-});
+  httpServer.listen(apiPort, () => {
+    console.log(`[api] listening on http://localhost:${apiPort}`);
+    observability.info('API server started', { port: apiPort, appRole });
+  });
+}
 
 // Initialize database
 await initDb();
-const recoveredRuns = await recoverRunningRunsOnBoot();
-if (recoveredRuns > 0) {
-  observability.warn('Recovered running agent runs as aborted', { recoveredRuns });
+if (runApi) {
+  const recoveredRuns = await recoverRunningRunsOnBoot();
+  if (recoveredRuns > 0) {
+    observability.warn('Recovered running agent runs as aborted', { recoveredRuns });
+  }
 }
 
 // Start Hocuspocus sync server
-const syncServer = createHocuspocusServer();
-syncServer.listen();
-console.log(`[sync] listening on ws://localhost:${syncServer.configuration.port}`);
-observability.info('Sync server started', { port: syncServer.configuration.port });
+const syncServer = runSync ? createHocuspocusServer() : null;
+if (syncServer) {
+  syncServer.listen();
+  console.log(`[sync] listening on ws://localhost:${syncServer.configuration.port}`);
+  observability.info('Sync server started', { port: syncServer.configuration.port, appRole });
+}
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
@@ -185,10 +200,19 @@ process.on('SIGTERM', async () => {
 
   snapshotService.stopAll();
 
-  httpServer.close(() => {
-    observability.info('HTTP server closed');
+  if (syncServer) {
+    await syncServer.destroy();
+    observability.info('Sync server closed');
+  }
+
+  if (runApi) {
+    httpServer.close(() => {
+      observability.info('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
 
   // Force close after 30 seconds
   setTimeout(() => {
@@ -202,10 +226,19 @@ process.on('SIGINT', async () => {
 
   snapshotService.stopAll();
 
-  httpServer.close(() => {
-    observability.info('HTTP server closed');
+  if (syncServer) {
+    await syncServer.destroy();
+    observability.info('Sync server closed');
+  }
+
+  if (runApi) {
+    httpServer.close(() => {
+      observability.info('HTTP server closed');
+      process.exit(0);
+    });
+  } else {
     process.exit(0);
-  });
+  }
 
   // Force close after 30 seconds
   setTimeout(() => {

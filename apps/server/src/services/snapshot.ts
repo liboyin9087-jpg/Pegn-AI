@@ -2,6 +2,17 @@ import * as Y from 'yjs';
 import { pool } from '../db/client.js';
 import { DocumentModel } from '../models/document.js';
 
+export interface SnapshotDrillResult {
+  ok: boolean;
+  documentId: string;
+  version?: number;
+  snapshotId?: string;
+  snapshotCreatedAt?: Date;
+  contentLength?: number;
+  durationMs: number;
+  error?: string;
+}
+
 export interface SnapshotOptions {
   intervalMs?: number;
   maxSnapshots?: number;
@@ -236,6 +247,54 @@ export class SnapshotService {
       console.log(`[snapshot] Stopped snapshotting document ${documentId}`);
     }
     this.intervals.clear();
+  }
+
+  // P1-1: 回放驗證 — 讀取最新 snapshot 并協妴 Y.Doc，回傳奖復結果
+  async validateSnapshotRecovery(documentId: string): Promise<SnapshotDrillResult> {
+    const t0 = Date.now();
+    if (!pool) {
+      return { ok: false, documentId, error: 'db_unavailable', durationMs: 0 };
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT id, yjs_snapshot, version, created_at
+         FROM document_snapshots
+         WHERE document_id = $1
+         ORDER BY created_at DESC LIMIT 1`,
+        [documentId]
+      );
+
+      if (result.rows.length === 0) {
+        return { ok: false, documentId, error: 'no_snapshot_found', durationMs: Date.now() - t0 };
+      }
+
+      const row = result.rows[0];
+      const snapshotBuf: Buffer = row.yjs_snapshot;
+
+      // 將 snapshot bytes 套用至全新 Y.Doc，讀取 text 內容驗證可復转
+      const ydoc = new Y.Doc();
+      Y.applyUpdate(ydoc, snapshotBuf);
+      const contentLength = ydoc.getText('content').toJSON().length;
+      ydoc.destroy();
+
+      return {
+        ok: true,
+        documentId,
+        version: row.version,
+        snapshotId: row.id,
+        snapshotCreatedAt: row.created_at,
+        contentLength,
+        durationMs: Date.now() - t0,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        documentId,
+        error: error instanceof Error ? error.message : 'unknown',
+        durationMs: Date.now() - t0,
+      };
+    }
   }
 }
 

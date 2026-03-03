@@ -20,6 +20,15 @@ export interface GraphRAGResult {
   }>;
   entities: Array<{ id: string; name: string; entity_type: string }>;
   citations: string[];
+  // P1-2: 查詢效能分析
+  timing?: {
+    embedding_ms: number;
+    vector_ms: number;
+    bm25_ms: number;
+    kg_ms: number;
+    synthesis_ms: number;
+    total_ms: number;
+  };
 }
 
 // ── Reciprocal Rank Fusion ───────────────────────────────────
@@ -64,10 +73,13 @@ export async function graphRAGQuery(
     return { answer: 'DB unavailable', sources: [], entities: [], citations: [] };
   }
 
+  const t0 = Date.now();
   observability.info('GraphRAG query started', { query: query.slice(0, 80), workspaceId });
 
   // 1. 向量搜尋
+  const t1 = Date.now();
   const embedding = await getEmbedding(query);
+  const t2 = Date.now();
   const vectorResults = embedding.length > 0
     ? (await pool.query(
         `SELECT id, document_id, content, title,
@@ -80,6 +92,7 @@ export async function graphRAGQuery(
         [`[${embedding.join(',')}]`, workspaceId, topK]
       )).rows
     : [];
+  const t3 = Date.now();
 
   // 2. BM25 全文搜尋
   const bm25Results = (await pool.query(
@@ -92,6 +105,7 @@ export async function graphRAGQuery(
      ORDER BY score DESC LIMIT $3`,
     [query, workspaceId, topK]
   )).rows;
+  const t4 = Date.now();
 
   // 3. KG 實體搜尋（根據 query 所有詞找相關實體，再取鄰居）
   // Fix 6: 改用全詞匹配（ILIKE ANY），避免只取第一個詞而漏掉相關實體
@@ -116,6 +130,7 @@ export async function graphRAGQuery(
       graphChunks.push({ id: `kg-${entity.id}`, score: 0.8, content: summary, document_id: entity.document_id ?? '' });
     }
   }
+  const t5 = Date.now();
 
   // 4. RRF 融合三個結果清單
   const vectorList = vectorResults.map((r: any) => ({ id: r.id, score: r.score, content: r.content, document_id: r.document_id, type: 'vector' as const }));
@@ -154,11 +169,23 @@ ${context}
       observability.error('GraphRAG answer generation failed', { error });
     }
   }
+  const t6 = Date.now();
+
+  const timing = {
+    embedding_ms: t2 - t1,
+    vector_ms: t3 - t2,
+    bm25_ms: t4 - t3,
+    kg_ms: t5 - t4,
+    synthesis_ms: t6 - t5,
+    total_ms: t6 - t0,
+  };
+  observability.info('GraphRAG query completed', { timing, workspaceId });
 
   return {
     answer,
     sources: fused.map(r => ({ content: r.content, document_id: r.document_id, score: r.rrf_score, type: r.type })),
     entities: entityResults.map(e => ({ id: e.id, name: e.name, entity_type: e.entity_type })),
-    citations
+    citations,
+    timing,
   };
 }

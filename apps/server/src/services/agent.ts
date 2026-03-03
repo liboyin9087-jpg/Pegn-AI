@@ -1,12 +1,134 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
 import { graphRAGQuery } from './graphrag.js';
 import { searchService } from './search.js';
 
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-  : null;
+// ── Agent LLM abstraction (Gemini / OpenAI / Claude) ────────────────────────
+
+interface AgentLLM {
+  readonly provider: string;
+  generate(prompt: string): Promise<string>;
+  stream(prompt: string, onToken: (token: string) => void): Promise<string>;
+}
+
+class GeminiAgentLLM implements AgentLLM {
+  readonly provider = 'gemini';
+  private model: ReturnType<GoogleGenerativeAI['getGenerativeModel']>;
+
+  constructor() {
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    this.model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
+  }
+
+  async generate(prompt: string): Promise<string> {
+    const result = await this.model.generateContent(prompt);
+    return result.response.text();
+  }
+
+  async stream(prompt: string, onToken: (token: string) => void): Promise<string> {
+    const result = await this.model.generateContentStream(prompt);
+    let full = '';
+    for await (const chunk of result.stream) {
+      const t = chunk.text();
+      if (t) { full += t; onToken(t); }
+    }
+    return full;
+  }
+}
+
+class OpenAIAgentLLM implements AgentLLM {
+  readonly provider = 'openai';
+  private client: OpenAI;
+  private modelName: string;
+
+  constructor() {
+    this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    this.modelName = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+  }
+
+  async generate(prompt: string): Promise<string> {
+    const res = await this.client.chat.completions.create({
+      model: this.modelName,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return res.choices[0]?.message?.content ?? '';
+  }
+
+  async stream(prompt: string, onToken: (token: string) => void): Promise<string> {
+    const res = await this.client.chat.completions.create({
+      model: this.modelName,
+      messages: [{ role: 'user', content: prompt }],
+      stream: true,
+    });
+    let full = '';
+    for await (const chunk of res) {
+      const t = chunk.choices[0]?.delta?.content ?? '';
+      if (t) { full += t; onToken(t); }
+    }
+    return full;
+  }
+}
+
+class ClaudeAgentLLM implements AgentLLM {
+  readonly provider = 'claude';
+  private client: Anthropic;
+  private modelName: string;
+
+  constructor() {
+    this.client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    this.modelName = process.env.CLAUDE_MODEL ?? 'claude-3-5-sonnet-20241022';
+  }
+
+  async generate(prompt: string): Promise<string> {
+    const msg = await this.client.messages.create({
+      model: this.modelName,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const block = msg.content[0];
+    return block?.type === 'text' ? block.text : '';
+  }
+
+  async stream(prompt: string, onToken: (token: string) => void): Promise<string> {
+    let full = '';
+    const stream = await this.client.messages.create({
+      model: this.modelName,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+      stream: true,
+    });
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        const t = event.delta.text;
+        if (t) { full += t; onToken(t); }
+      }
+    }
+    return full;
+  }
+}
+
+function createAgentLLM(): AgentLLM | null {
+  const preferred = String(process.env.AGENT_LLM_PROVIDER ?? 'auto').toLowerCase();
+
+  if ((preferred === 'gemini' || preferred === 'auto') && process.env.GEMINI_API_KEY) {
+    observability.info('Agent LLM provider', { provider: 'gemini' });
+    return new GeminiAgentLLM();
+  }
+  if ((preferred === 'openai' || preferred === 'auto') && process.env.OPENAI_API_KEY) {
+    observability.info('Agent LLM provider', { provider: 'openai' });
+    return new OpenAIAgentLLM();
+  }
+  if ((preferred === 'claude' || preferred === 'auto') && process.env.ANTHROPIC_API_KEY) {
+    observability.info('Agent LLM provider', { provider: 'claude' });
+    return new ClaudeAgentLLM();
+  }
+
+  observability.warn('Agent LLM: no provider configured, running in fallback mode');
+  return null;
+}
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';
 export type RunStatus = 'running' | 'done' | 'error' | 'aborted';
@@ -76,14 +198,74 @@ const STEP_TEMPLATES = [
   { step_key: 'writer',   name: '產出結果', worker: 'writer',   position: 40 },
 ] as const;
 
+// P1-3: Agent 模板 DSL Registry — 將硬編碼字串整合為一個可經兩本維護的設定物件
+interface TemplateConfig {
+  /** 給 planner LLM 的路由提示 */
+  plannerHint: string;
+  /** writer 輸出指令 */
+  basePrompt: string;
+  /** LLM 不可用時的预設子任務 */
+  fallbackTasks: (query: string) => string[];
+}
+
+const TEMPLATE_REGISTRY: Record<AgentTemplate, TemplateConfig> = {
+  supervisor: {
+    plannerHint: '通用任務拆解',
+    basePrompt: '請輸出結構化答案，包含重點與可執行建議。',
+    fallbackTasks: (query) => [
+      `界定問題範圍：${query}`,
+      '收集與問題直接相關的證據與來源',
+      '整合證據並輸出可執行結論',
+    ],
+  },
+  research: {
+    plannerHint: '深度研究拆解',
+    basePrompt: '請輸出結構化答案，包含重點與可執行建議。',
+    fallbackTasks: (query) => [
+      `界定問題範圍：${query}`,
+      '收集與問題直接相關的證據與來源',
+      '整合證據並輸出可執行結論',
+    ],
+  },
+  summarize: {
+    plannerHint: '摘要任務拆解',
+    basePrompt: '請輸出精簡摘要與行動重點。',
+    fallbackTasks: () => ['抽取重點主題', '壓縮內容為精簡摘要', '整理可執行結論'],
+  },
+  brainstorm: {
+    plannerHint: '創意發想拆解',
+    basePrompt: '請輸出多角度創意想法，以發散思考為主，條列各方向及其潛力。',
+    fallbackTasks: (query) => [
+      `從不同角度拆解主題：${query}`,
+      '發散思考：列出非顯而易見的創意方向',
+      '歸納並評估各想法的可行性與潛力',
+    ],
+  },
+  outline: {
+    plannerHint: '大綱結構拆解',
+    basePrompt: '請輸出層次清晰的結構化大綱，包含章節標題與各章節的核心要點提示。',
+    fallbackTasks: (query) => [
+      `分析主題核心架構：${query}`,
+      '規劃層次化大綱（章節 / 小節 / 要點）',
+      '補充每個章節的關鍵內容提示',
+    ],
+  },
+};
+
 function approxTokenUsage(content: unknown): number {
   const text = typeof content === 'string' ? content : JSON.stringify(content ?? '');
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
+// Lazy singleton — created once on first use so env vars are available
+let _agentLLM: AgentLLM | null | undefined = undefined;
+function getAgentLLM(): AgentLLM | null {
+  if (_agentLLM === undefined) _agentLLM = createAgentLLM();
+  return _agentLLM;
+}
+
 async function getModel() {
-  if (!genAI) return null;
-  return genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
+  return getAgentLLM();
 }
 
 async function loadRun(runId: string): Promise<AgentRun | null> {
@@ -196,28 +378,7 @@ async function runStep<TInput, TOutput>(
 }
 
 function fallbackTaskPlan(query: string, template: AgentTemplate): string[] {
-  if (template === 'summarize') {
-    return ['抽取重點主題', '壓縮內容為精簡摘要', '整理可執行結論'];
-  }
-  if (template === 'brainstorm') {
-    return [
-      `從不同角度拆解主題：${query}`,
-      '發散思考：列出非顯而易見的創意方向',
-      '歸納並評估各想法的可行性與潛力',
-    ];
-  }
-  if (template === 'outline') {
-    return [
-      `分析主題核心架構：${query}`,
-      '規劃層次化大綱（章節 / 小節 / 要點）',
-      '補充每個章節的關鍵內容提示',
-    ];
-  }
-  return [
-    `界定問題範圍：${query}`,
-    '收集與問題直接相關的證據與來源',
-    '整合證據並輸出可執行結論',
-  ];
+  return (TEMPLATE_REGISTRY[template] ?? TEMPLATE_REGISTRY.supervisor).fallbackTasks(query);
 }
 
 async function plannerWorker(query: string, template: AgentTemplate): Promise<{ tasks: string[]; intent: string }> {
@@ -227,12 +388,12 @@ async function plannerWorker(query: string, template: AgentTemplate): Promise<{ 
   }
 
   const prompt = `你是任務規劃器。請把使用者需求拆成 2-4 個可執行子任務，回傳 JSON：{"intent":"...","tasks":["...",...]}
-Template: ${template}
+Template: ${TEMPLATE_REGISTRY[template]?.plannerHint ?? template}
 User query: ${query}`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
+    const rawText = await model.generate(prompt);
+    const raw = rawText.trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
     const parsed = JSON.parse(raw);
     const tasks = Array.isArray(parsed.tasks)
       ? parsed.tasks.map((t: any) => String(t)).filter(Boolean).slice(0, 4)
@@ -318,8 +479,8 @@ async function analystWorker(retrieved: any, query: string): Promise<{ analysis:
 
   const prompt = `你是分析員。根據檢索結果整理關鍵洞察，回傳 JSON：{"analysis":"...","key_points":["..."]}\n\nUser query: ${query}\n\nEvidence:\n${evidenceText}`;
   try {
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
+    const rawText = await model.generate(prompt);
+    const raw = rawText.trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
     const parsed = JSON.parse(raw);
     return {
       analysis: String(parsed.analysis ?? evidenceText.slice(0, 3000)),
@@ -343,11 +504,7 @@ async function writerWorker(
   onToken?: (token: string) => void
 ): Promise<{ answer: string; citations: string[] }> {
   const model = await getModel();
-  const basePrompt =
-    template === 'summarize' ? '請輸出精簡摘要與行動重點。' :
-    template === 'brainstorm' ? '請輸出多角度創意想法，以發散思考為主，條列各方向及其潛力。' :
-    template === 'outline' ? '請輸出層次清晰的結構化大綱，包含章節標題與各章節的核心要點提示。' :
-    '請輸出結構化答案，包含重點與可執行建議。';
+  const { basePrompt } = TEMPLATE_REGISTRY[template] ?? TEMPLATE_REGISTRY.supervisor;
 
   if (!model) {
     const answer = `${basePrompt}\n\n問題：${query}\n\n${analysis.analysis ?? ''}`;
@@ -356,15 +513,7 @@ async function writerWorker(
 
   const prompt = `${basePrompt}\n\n請用繁體中文回答。\n問題：${query}\n\n分析：${analysis.analysis}`;
   try {
-    const stream = await model.generateContentStream(prompt);
-    let answer = '';
-    for await (const chunk of stream.stream) {
-      const text = chunk.text();
-      if (text) {
-        answer += text;
-        onToken?.(text);
-      }
-    }
+    const answer = await model.stream(prompt, (token) => onToken?.(token));
     const citations = [...new Set(answer.match(/\[(\d+)\]/g) ?? [])];
     return { answer, citations };
   } catch {
@@ -382,6 +531,107 @@ async function insertWorkerStep(runId: string, stepKey: string, name: string, po
      ON CONFLICT (run_id, step_key) DO NOTHING`,
     [runId, stepKey, name, position]
   );
+}
+
+// P2-1: 遞迴 Worker — 複雜任務可拆解為 sub-worker 並行執行
+// MAX_RECURSION_DEPTH = 1 表示 workers 可再拆一層 sub-workers（防止無限遞迴）
+const MAX_RECURSION_DEPTH = 1;
+const RECURSION_WORD_THRESHOLD = 12; // 任務說明超過此字數才考慮拆解
+
+async function runWorkerWithRecursion(
+  runId: string,
+  parentStepKey: string,
+  task: string,
+  workspaceId: string,
+  mode: 'auto' | 'hybrid' | 'graph',
+  parentPosition: number,
+  depth = 0
+): Promise<any> {
+  // Depth guard - 達到上限直接做普通 retrieval
+  if (depth >= MAX_RECURSION_DEPTH) {
+    return retrieveForTask(task, workspaceId, mode);
+  }
+
+  const llm = getAgentLLM();
+  const words = task.trim().split(/\s+/).length;
+
+  // 若任務夠短或 LLM 不可用，不做遞迴
+  if (words < RECURSION_WORD_THRESHOLD || !llm) {
+    return retrieveForTask(task, workspaceId, mode);
+  }
+
+  // 請 LLM 判斷是否值得拆解 (max 2 sub-tasks)
+  const decompositionPrompt = `你是一個 Agent 排程器。請判斷以下任務是否能有效拆成 2 個更具體的子任務（各自獨立可平行執行），若可以回傳 JSON：{"decompose":true,"sub_tasks":["...","..."]}；若不需要拆解則回傳：{"decompose":false}
+
+任務：${task}`;
+
+  let subTasks: string[] = [];
+  try {
+    const raw = await llm.generate(decompositionPrompt);
+    const parsed = JSON.parse(raw.trim().replace(/^```json\n?/, '').replace(/\n?```$/, ''));
+    if (parsed.decompose === true && Array.isArray(parsed.sub_tasks) && parsed.sub_tasks.length >= 2) {
+      subTasks = parsed.sub_tasks.slice(0, 2).map(String).filter(Boolean);
+    }
+  } catch { /* LLM 解析失敗 → 不拆解 */ }
+
+  if (subTasks.length < 2) {
+    return retrieveForTask(task, workspaceId, mode);
+  }
+
+  // 插入 sub-worker DB 步驟（position = parentPosition * 10 + i）
+  const subBasePos = parentPosition * 10;
+  await Promise.all(subTasks.map((st, i) =>
+    insertWorkerStep(runId, `${parentStepKey}_sub_${i + 1}`, `Sub-Worker ${i + 1}: ${st.slice(0, 40)}`, subBasePos + i)
+  ));
+
+  observability.info('Recursive worker decomposing task', { runId, parentStepKey, depth, subCount: subTasks.length });
+
+  // 平行執行 sub-workers（depth + 1，不再遞迴）
+  const subSettled = await Promise.allSettled(
+    subTasks.map(async (subTask, i) => {
+      const subKey = `${parentStepKey}_sub_${i + 1}`;
+      await updateStep(runId, subKey, { status: 'running', input: { task: subTask, mode }, started_at: new Date().toISOString() });
+      try {
+        const result = await runWorkerWithRecursion(runId, subKey, subTask, workspaceId, mode, subBasePos + i, depth + 1);
+        await updateStep(runId, subKey, {
+          status: 'done',
+          output: result,
+          token_usage: approxTokenUsage(result),
+          finished_at: new Date().toISOString(),
+        });
+        return result;
+      } catch (err) {
+        await updateStep(runId, subKey, {
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Sub-worker failed',
+          finished_at: new Date().toISOString(),
+        });
+        throw err;
+      }
+    })
+  );
+
+  const fulfilled = subSettled
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+    .map(r => r.value);
+
+  if (fulfilled.length === 0) {
+    // 全部失敗，回退到普通 retrieval
+    return retrieveForTask(task, workspaceId, mode);
+  }
+
+  // 合併 sub-worker 結果
+  return {
+    task,
+    mode_used: 'recursive' as const,
+    routing_reason: `recursive_decomposition(depth=${depth},sub_tasks=${subTasks.length})`,
+    answer: fulfilled.map(r => r.answer ?? '').join('\n\n'),
+    sources: fulfilled.flatMap(r => r.sources ?? []),
+    entities: fulfilled.flatMap(r => r.entities ?? []),
+    citations: [...new Set(fulfilled.flatMap(r => r.citations ?? []))],
+    hybrid_top_score: Math.max(0, ...fulfilled.map(r => r.hybrid_top_score ?? 0)),
+    sub_tasks: subTasks,
+  };
 }
 
 async function runSupervisorPipeline(
@@ -410,7 +660,8 @@ async function runSupervisorPipeline(
       const stepKey = `worker_${i + 1}`;
       await updateStep(runId, stepKey, { status: 'running', input: { task, mode }, started_at: new Date().toISOString() });
       try {
-        const result = await retrieveForTask(task, workspaceId, mode);
+        // P2-1: 支援遞迴拆解 — 複雜任務會遞迴分解為 sub-workers
+        const result = await runWorkerWithRecursion(runId, stepKey, task, workspaceId, mode, 10 + i, 0);
         const workerResult = { task, ...result };
         await updateStep(runId, stepKey, {
           status: 'done',

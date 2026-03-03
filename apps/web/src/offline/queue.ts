@@ -28,12 +28,51 @@ export interface OfflineQueueReplayResult {
   failed_ids: string[];
 }
 
+// P1-4: SLA 指標型別
+export interface QueueSLAMetrics {
+  /** 目前佇列中等待重試的項目數 */
+  pending_count: number;
+  /** 已超過最大重試次數的失敗項目數 */
+  failed_count: number;
+  /** 歷史累計成功 replay 次數 */
+  cumulative_success: number;
+  /** 歷史累計失敗 replay 次數 */
+  cumulative_fail: number;
+  /** 成功率（0~1），窟無記錄時為 1 */
+  success_rate: number;
+  /** 目前 pending 項目的平均滞留時間（ms），窟無 pending 項目時為 null */
+  avg_dwell_ms: number | null;
+  /** P95 滞留時間（ms） */
+  p95_dwell_ms: number | null;
+}
+
 const DB_NAME = 'pegn_offline_queue_db';
 const STORE_NAME = 'mutation_queue';
 const DB_VERSION = 2;
 const MAX_RETRY_ATTEMPTS = 5;
 const QUEUE_CHANGED_EVENT = 'offline-queue:changed';
 const QUEUE_REPLAYED_EVENT = 'offline-queue:replayed';
+
+// P1-4: SLA 指標 localStorage keys
+const SLA_SUCCESS_KEY = 'pegn_queue_sla_success';
+const SLA_FAIL_KEY    = 'pegn_queue_sla_fail';
+
+function _slaIncrement(key: string): void {
+  if (typeof localStorage === 'undefined') return;
+  const prev = parseInt(localStorage.getItem(key) ?? '0', 10);
+  localStorage.setItem(key, String(Number.isFinite(prev) ? prev + 1 : 1));
+}
+
+function _slaRead(key: string): number {
+  if (typeof localStorage === 'undefined') return 0;
+  return parseInt(localStorage.getItem(key) ?? '0', 10) || 0;
+}
+
+function _percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.min(idx, sorted.length - 1)];
+}
 
 function supportIndexedDb(): boolean {
   return typeof window !== 'undefined' && !!window.indexedDB;
@@ -249,6 +288,7 @@ export async function replayOfflineQueue(options: { baseUrl: string; token?: str
         await removeItemsById([item.id]);
         result.processed += 1;
         result.processed_ids.push(item.id);
+        _slaIncrement(SLA_SUCCESS_KEY);
         continue;
       }
 
@@ -256,12 +296,14 @@ export async function replayOfflineQueue(options: { baseUrl: string; token?: str
       if (failure.status === 'failed') {
         result.failed += 1;
         result.failed_ids.push(item.id);
+        _slaIncrement(SLA_FAIL_KEY);
       }
     } catch (error) {
       const failure = await markReplayFailure(item, error instanceof Error ? error.message : 'NETWORK_ERROR');
       if (failure.status === 'failed') {
         result.failed += 1;
         result.failed_ids.push(item.id);
+        _slaIncrement(SLA_FAIL_KEY);
       }
       break;
     }
@@ -291,4 +333,41 @@ export function onOfflineQueueReplayed(listener: (result: OfflineQueueReplayResu
   };
   window.addEventListener(QUEUE_REPLAYED_EVENT, handler as EventListener);
   return () => window.removeEventListener(QUEUE_REPLAYED_EVENT, handler as EventListener);
+}
+
+// P1-4: 離線佇列 SLA 指標 — 讀取 IndexedDB 現狀 + localStorage 累計計數
+export async function getQueueSLAMetrics(): Promise<QueueSLAMetrics> {
+  const items = await readAllItems();
+  const now = Date.now();
+
+  const pending = items.filter(i => i.status === 'pending');
+  const failed  = items.filter(i => i.status === 'failed');
+
+  // Dwell time = 「現在」減去每個 pending 項目的 created_at
+  const dwellSamples = pending
+    .map(i => now - Date.parse(i.created_at))
+    .filter(n => Number.isFinite(n) && n >= 0)
+    .sort((a, b) => a - b);
+
+  const cumSuccess = _slaRead(SLA_SUCCESS_KEY);
+  const cumFail    = _slaRead(SLA_FAIL_KEY);
+  const total = cumSuccess + cumFail;
+  const successRate = total > 0 ? Math.round((cumSuccess / total) * 1000) / 1000 : 1;
+
+  const avgDwell = dwellSamples.length > 0
+    ? Math.round(dwellSamples.reduce((a, b) => a + b, 0) / dwellSamples.length)
+    : null;
+  const p95Dwell = dwellSamples.length > 0
+    ? _percentile(dwellSamples, 95)
+    : null;
+
+  return {
+    pending_count: pending.length,
+    failed_count: failed.length,
+    cumulative_success: cumSuccess,
+    cumulative_fail: cumFail,
+    success_rate: successRate,
+    avg_dwell_ms: avgDwell,
+    p95_dwell_ms: p95Dwell,
+  };
 }

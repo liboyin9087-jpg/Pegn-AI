@@ -28,7 +28,7 @@ import {
   updateDocument, moveDocument,
   acceptInvite,
   listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
-  getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
+  getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations, getQueueSLAMetrics,
   listFavorites, toggleFavorite, listTrash, restoreFromTrash, permanentDeleteFromTrash,
   type InboxNotification, type OfflineQueueMetricsSource,
 } from './api/client';
@@ -214,12 +214,15 @@ export default function App() {
   }) => {
     if (!workspace?.id) return;
     try {
+      // P1-4: 包含 SLA 指標一起報告
+      const sla = await getQueueSLAMetrics().catch(() => undefined);
       await reportOfflineQueueMetrics({
         workspace_id: workspace.id,
         queue_depth: payload.queue_depth,
         replay_processed: payload.replay_processed,
         replay_failed: payload.replay_failed,
         source: payload.source,
+        sla,
       });
     } catch (error) {
       console.warn('Failed to report offline queue observability', error);

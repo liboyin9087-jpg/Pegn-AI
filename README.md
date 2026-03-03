@@ -156,6 +156,10 @@ docker-compose up -d postgres redis
 npm run dev
 ```
 
+### 方式 C：GCP 部署（Cloud Run + Cloud SQL）
+
+請參考部署指引：[`docs/gcp-deploy.zh-TW.md`](docs/gcp-deploy.zh-TW.md)
+
 ---
 
 ## 服務一覽
@@ -195,6 +199,8 @@ cp .env.example .env
 |------|------|
 | `JWT_SECRET` | JWT 簽署密鑰，生產環境必須設為隨機 32+ 字元字串 |
 | `GEMINI_API_KEY` | Google Gemini API Key（AI 全功能依賴）|
+| `OPENAI_API_KEY` | OpenAI API Key（PromptOps 可切換 provider）|
+| `PROMPT_OPS_LLM_PROVIDER` | Prompt 測試 provider：`auto` / `gemini` / `openai` / `mock` |
 | `DATABASE_URL` | PostgreSQL 連線字串 |
 
 ### Docker 部署 vs 本地開發差異
@@ -313,6 +319,9 @@ cp .env.example .env
 |------|------|------|
 | `GET` | `/api/v1/billing/usage` | 取得工作區用量報告（需 admin）|
 | `GET` | `/api/v1/billing/quota?resource=agent_runs` | 查詢配額狀態 |
+| `GET` | `/api/v1/billing/plans` | 取得可用方案與預設配額（free/pro/team） |
+| `GET` | `/api/v1/billing/plan` | 取得工作區目前方案（需 workspace admin） |
+| `POST` | `/api/v1/billing/plan` | 更新工作區方案（需 workspace admin） |
 
 ### Prompt 管理
 

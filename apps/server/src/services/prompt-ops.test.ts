@@ -1,12 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const genContentSpy = vi.fn();
+const openAiCreateSpy = vi.fn();
 
 vi.mock('@google/generative-ai', () => ({
   GoogleGenerativeAI: vi.fn().mockImplementation(() => ({
     getGenerativeModel: vi.fn().mockReturnValue({
       generateContent: genContentSpy,
     }),
+  })),
+}));
+
+vi.mock('openai', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    chat: {
+      completions: {
+        create: openAiCreateSpy,
+      },
+    },
   })),
 }));
 
@@ -19,6 +30,7 @@ describe('PromptOpsService LLM provider', () => {
     vi.resetModules();
     vi.clearAllMocks();
     delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     delete process.env.PROMPT_OPS_LLM_PROVIDER;
   });
 
@@ -74,5 +86,37 @@ describe('PromptOpsService LLM provider', () => {
     expect(result.actual_output).toBe('Gemini output');
     expect(result.metadata.provider).toBe('gemini');
     expect(genContentSpy).toHaveBeenCalledTimes(1);
+    expect(openAiCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses openai provider when explicitly enabled and key exists', async () => {
+    process.env.PROMPT_OPS_LLM_PROVIDER = 'openai';
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    openAiCreateSpy.mockResolvedValue({
+      choices: [{ message: { content: 'OpenAI output' } }],
+    });
+
+    const { PromptOpsService } = await import('./prompt-ops.js');
+    const service = new PromptOpsService();
+
+    const prompt = {
+      id: 'p-3',
+      name: 't',
+      version: '1.0.0',
+      content: 'System prompt',
+      hash: 'hash',
+      category: 'general',
+      tags: [],
+      metadata: {},
+      created_at: new Date(),
+      updated_at: new Date(),
+      is_active: true,
+    };
+
+    const result = await (service as any).runSingleTest(prompt, 'input text');
+    expect(result.actual_output).toBe('OpenAI output');
+    expect(result.metadata.provider).toBe('openai');
+    expect(openAiCreateSpy).toHaveBeenCalledTimes(1);
+    expect(genContentSpy).not.toHaveBeenCalled();
   });
 });

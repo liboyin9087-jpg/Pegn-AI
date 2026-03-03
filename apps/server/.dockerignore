@@ -1,8 +1,5 @@
 node_modules
 dist
-src
-*.ts
-!*.d.ts
 .env
 .env.*
 !.env.example

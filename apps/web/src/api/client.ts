@@ -5,10 +5,14 @@ import {
   onOfflineQueueChanged,
   onOfflineQueueReplayed,
   generateIdempotencyKey,
+  getQueueSLAMetrics,
   type OfflineOperationType,
   type OfflineQueueReplayResult,
   type OfflineQueueItem,
+  type QueueSLAMetrics,
 } from '../offline/queue';
+
+export { getQueueSLAMetrics, type QueueSLAMetrics };
 
 const BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:4000') + '/api/v1';
 const OFFLINE_ROLLOUT_USER_KEY = 'pegn_offline_rollout_user_id';
@@ -80,6 +84,17 @@ function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
   return headers as Record<string, string>;
 }
 
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly body?: unknown
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const providedHeaders = normalizeHeaders(opts?.headers);
@@ -98,9 +113,13 @@ export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   if (res.status === 401) {
     clearToken();
     window.location.reload();
-    throw new Error('Unauthorized');
+    throw new ApiError(401, 'Unauthorized');
   }
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    let body: unknown;
+    try { body = await res.json(); } catch { /* ignore */ }
+    throw new ApiError(res.status, `API ${path} failed: ${res.status}`, body);
+  }
   return res.json();
 }
 
@@ -121,6 +140,8 @@ export interface OfflineQueueObservabilityPayload {
   replay_processed?: number;
   replay_failed?: number;
   source?: OfflineQueueMetricsSource;
+  /** P1-4: 離線佇列 SLA 指標 */
+  sla?: QueueSLAMetrics;
 }
 
 function shouldQueueOnError(error: unknown): boolean {

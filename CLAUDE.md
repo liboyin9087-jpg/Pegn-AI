@@ -223,6 +223,26 @@ git push -u origin claude/review-core-features-M27dd
 
 ## Phase 3 待辦 (尚未實作)
 
+### 已完成 P0 項目 (上個 session)
+- [x] Claude LLM Provider (`ClaudeLLMProvider` in `prompt-ops.ts`, `ClaudeAgentLLM` in `agent.ts`)
+- [x] 多模型 Agent LLM 抽象層 (`AgentLLM` interface: Gemini/OpenAI/Claude, `AGENT_LLM_PROVIDER` env)
+- [x] Quota 429 UX (`ApiError` class in `client.ts`, `quotaError` banner in `AgentPanel.tsx`)
+- [x] 安裝 `@anthropic-ai/sdk` 至 `apps/server`
+
+### 已完成 P1 項目 (本 session)
+- [x] P1-1: Snapshot 回放驗證 (`validateSnapshotRecovery()` in `snapshot.ts`, `GET /health/snapshot-drill?document_id=xxx` in `health.ts`)
+- [x] P1-2: GraphRAG 效能 profile (`timing` 欄位加入 `GraphRAGResult`，覆蓋 embedding/vector/bm25/kg/synthesis 各階段 ms)
+- [x] P1-3: Agent 模板 DSL 配置化 (`TEMPLATE_REGISTRY` in `agent.ts`，取代 fallbackTaskPlan/writerWorker 的 if/else)
+- [x] P1-4: 離線佇列 SLA 指標 (`QueueSLAMetrics` interface, `getQueueSLAMetrics()`, localStorage 累計計數 in `queue.ts`; SLA 欄位加入 `OfflineQueueObservabilityPayload`; App.tsx 自動包含)
+
+### 環境變數新增
+```bash
+ANTHROPIC_API_KEY=...       # Claude 支援 (prompt-ops + agent)
+AGENT_LLM_PROVIDER=auto     # auto/gemini/openai/claude (預設 auto)
+PROMPT_OPS_LLM_PROVIDER=auto # auto/gemini/openai/claude (預設 auto)
+CLAUDE_MODEL=claude-3-5-sonnet-20241022  # 預設模型
+```
+
 - [ ] 多租戶資料隔離（Row-Level Security）
 - [ ] 即時協作（WebSocket / CRDT）
 - [ ] 向量搜尋（pgvector）
