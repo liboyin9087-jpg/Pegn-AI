@@ -1,0 +1,10 @@
+.gcloudignore
+.git
+.github
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+**/*.log
+notion-ui-prototype.html
