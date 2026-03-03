@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText, Plus, MoreHorizontal, Edit2, Trash2, Upload,
   LogOut, Search, ChevronRight, FilePlus, Bell, GripVertical,
+  Star, Trash, RotateCcw, History, Zap,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, KeyboardSensor,
@@ -19,6 +20,9 @@ interface TreeNode extends Doc {
 }
 
 interface DropInfo { id: string; edge: 'before' | 'after' | 'inside'; }
+
+interface FavoriteDoc { id: string; title: string; metadata?: any; }
+interface TrashDoc { id: string; title: string; deleted_at: string; }
 
 interface Props {
   workspace: any;
@@ -40,6 +44,11 @@ interface Props {
   onLogout: () => void;
   onClose?: () => void;
   onOpenCommand?: () => void;
+  favorites?: FavoriteDoc[];
+  trashCount?: number;
+  onOpenTrash?: () => void;
+  onOpenAutomations?: () => void;
+  onFavoriteDoc?: (id: string, isFav: boolean) => void;
 }
 
 function buildTree(docs: Doc[]): TreeNode[] {
@@ -374,7 +383,9 @@ export default function Sidebar({
   onMoveDoc,
   inboxUnreadCount = 0, onOpenInbox, onLogout,
   onClose, onOpenCommand,
+  favorites = [], trashCount = 0, onOpenTrash, onOpenAutomations, onFavoriteDoc,
 }: Props) {
+  const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [menuDocId, setMenuDocId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
@@ -622,6 +633,39 @@ export default function Sidebar({
           </DndContext>
         )}
 
+        {/* ── Favorites ────────────────────────── */}
+        {favorites.length > 0 && (
+          <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid var(--color-border)' }}>
+            <button
+              onClick={() => setFavoritesOpen(o => !o)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, width: '100%', padding: '2px 16px 4px', background: 'none', border: 'none', cursor: 'pointer' }}>
+              <Star size={10} style={{ color: 'var(--color-text-quaternary)' }} />
+              <span style={{ fontSize: 11, color: 'var(--color-text-quaternary)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', flex: 1, textAlign: 'left' }}>
+                常用頁面
+              </span>
+              <ChevronRight size={10} style={{ color: 'var(--color-text-quaternary)', transform: favoritesOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+            </button>
+            {favoritesOpen && (
+              <div style={{ padding: '0 4px' }}>
+                {favorites.map(doc => (
+                  <button key={doc.id} onClick={() => { onSelectDoc(doc as any); onClose?.(); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                      padding: '5px 12px', borderRadius: 5, background: activeDoc?.id === doc.id ? 'var(--color-accent-light)' : 'none',
+                      border: 'none', cursor: 'pointer', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { if (activeDoc?.id !== doc.id) e.currentTarget.style.background = 'var(--color-panel-hover)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = activeDoc?.id === doc.id ? 'var(--color-accent-light)' : 'none'; }}>
+                    <span style={{ fontSize: 13 }}>{doc.metadata?.icon ?? '⭐'}</span>
+                    <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Collections ────────────────────── */}
         <div className="mt-4 pt-2 border-t border-gray-200/50">
           <div className="flex items-center justify-between px-4 py-1 mb-0.5">
             <span style={{ fontSize: 11, color: 'var(--color-text-quaternary)', fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
@@ -679,6 +723,33 @@ export default function Sidebar({
           <Upload size={13} style={{ color: 'var(--color-text-tertiary)' }} />
           匯入文件
         </button>
+
+        {onOpenAutomations && (
+          <button onClick={() => { onOpenAutomations(); onClose?.(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
+            style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-panel-hover)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+            <Zap size={13} style={{ color: '#7c3aed' }} />
+            AI 自動化
+          </button>
+        )}
+
+        {onOpenTrash && (
+          <button onClick={() => { onOpenTrash(); onClose?.(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
+            style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-panel-hover)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+            <Trash size={13} style={{ color: 'var(--color-text-tertiary)' }} />
+            <span style={{ flex: 1 }}>垃圾桶</span>
+            {trashCount > 0 && (
+              <span style={{ fontSize: 10, background: 'var(--color-surface-tertiary)', color: 'var(--color-text-tertiary)', borderRadius: 8, padding: '1px 5px' }}>
+                {trashCount}
+              </span>
+            )}
+          </button>
+        )}
 
         {user && (
           <div

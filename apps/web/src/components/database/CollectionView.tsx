@@ -1,9 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Table as TableIcon, Columns, Calendar as CalendarIcon,
   GalleryVertical, List as ListIcon, Settings2, Download, X,
+  Filter, ArrowUpDown, Plus, Trash2,
 } from 'lucide-react';
+
+// ── Filter / Sort types ───────────────────────────────────────
+interface FilterRule {
+  id: string;
+  propertyId: string;
+  op: 'contains' | 'not_contains' | 'eq' | 'ne' | 'is_empty' | 'is_not_empty';
+  value: string;
+}
+interface SortRule {
+  id: string;
+  propertyId: string;
+  dir: 'asc' | 'desc';
+}
 import { Collection, CollectionView as ViewType } from '../../types/collection';
 import { TableView } from './TableView';
 import { KanbanView } from './KanbanView';
@@ -39,6 +53,9 @@ export function CollectionView({
 
   const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [showSchemaEditor, setShowSchemaEditor] = useState(false);
+  const [showFilterSort, setShowFilterSort] = useState(false);
+  const [filters, setFilters] = useState<FilterRule[]>([]);
+  const [sorts, setSorts] = useState<SortRule[]>([]);
 
   const { documents, loading, addDocument, editDocument } = useCollectionDocuments(collection.id);
 
@@ -69,6 +86,44 @@ export function CollectionView({
       })
     ).then(results => setRelatedItems(new Map(results)));
   }, [collection.schema.properties]);
+
+  // ── Apply filters & sorts to documents ───────────────────────────────────
+  const filteredDocs = useMemo(() => {
+    let result = [...documents];
+    for (const f of filters) {
+      result = result.filter(doc => {
+        const rawVal = String(doc.properties?.[f.propertyId] ?? doc.title ?? '').toLowerCase();
+        const fVal = f.value.toLowerCase();
+        switch (f.op) {
+          case 'contains':     return rawVal.includes(fVal);
+          case 'not_contains': return !rawVal.includes(fVal);
+          case 'eq':           return rawVal === fVal;
+          case 'ne':           return rawVal !== fVal;
+          case 'is_empty':     return rawVal === '';
+          case 'is_not_empty': return rawVal !== '';
+          default:             return true;
+        }
+      });
+    }
+    if (sorts.length > 0) {
+      result.sort((a, b) => {
+        for (const s of sorts) {
+          const aVal = String(a.properties?.[s.propertyId] ?? a.title ?? '');
+          const bVal = String(b.properties?.[s.propertyId] ?? b.title ?? '');
+          const cmp = aVal.localeCompare(bVal, 'zh-TW');
+          if (cmp !== 0) return s.dir === 'asc' ? cmp : -cmp;
+        }
+        return 0;
+      });
+    }
+    return result;
+  }, [documents, filters, sorts]);
+
+  const schemaProps = Object.entries(collection.schema.properties ?? {});
+  const propOptions = [{ id: '__title__', name: '標題' }, ...schemaProps.map(([id, p]: [string, any]) => ({ id, name: p.name ?? id }))];
+
+  const addFilter = () => setFilters(prev => [...prev, { id: Math.random().toString(36).slice(2), propertyId: '__title__', op: 'contains', value: '' }]);
+  const addSort   = () => setSorts(prev  => [...prev, { id: Math.random().toString(36).slice(2), propertyId: '__title__', dir: 'asc' }]);
 
   const handleAddRow = async () => {
     try {
@@ -141,7 +196,7 @@ export function CollectionView({
     if (!activeView) return null;
     const commonProps = {
       collection,
-      data: documents,
+      data: filteredDocs,
       onAddRow: handleAddRow,
     };
     switch (activeView.type) {
@@ -219,6 +274,20 @@ export function CollectionView({
         })}
 
         <div className="ml-auto flex items-center gap-1" style={{ paddingBottom: 4 }}>
+          {/* Filter & Sort toggle */}
+          <button
+            onClick={() => setShowFilterSort(v => !v)}
+            style={{
+              padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+              display: 'flex', alignItems: 'center', gap: 4, border: 'none', cursor: 'pointer',
+              background: showFilterSort ? 'var(--color-accent-light)' : 'none',
+              color: showFilterSort ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+            }}
+            title="篩選與排序"
+          >
+            <Filter size={13} />
+            {(filters.length + sorts.length) > 0 ? `${filters.length + sorts.length}` : '篩選'}
+          </button>
           <button
             onClick={handleExport}
             style={{ padding: 6, color: 'var(--color-text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 6, display: 'flex' }}
@@ -243,6 +312,93 @@ export function CollectionView({
           </button>
         </div>
       </div>
+
+      {/* Filter / Sort Bar */}
+      <AnimatePresence>
+        {showFilterSort && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-secondary)', overflow: 'hidden', flexShrink: 0 }}
+          >
+            <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Filters */}
+              {filters.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>篩選條件</span>
+                  {filters.map(f => (
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <select value={f.propertyId} onChange={e => setFilters(prev => prev.map(x => x.id === f.id ? { ...x, propertyId: e.target.value } : x))}
+                        style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>
+                        {propOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <select value={f.op} onChange={e => setFilters(prev => prev.map(x => x.id === f.id ? { ...x, op: e.target.value as FilterRule['op'] } : x))}
+                        style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>
+                        <option value="contains">包含</option>
+                        <option value="not_contains">不包含</option>
+                        <option value="eq">等於</option>
+                        <option value="ne">不等於</option>
+                        <option value="is_empty">為空</option>
+                        <option value="is_not_empty">不為空</option>
+                      </select>
+                      {f.op !== 'is_empty' && f.op !== 'is_not_empty' && (
+                        <input value={f.value} onChange={e => setFilters(prev => prev.map(x => x.id === f.id ? { ...x, value: e.target.value } : x))}
+                          placeholder="值..." style={{ fontSize: 12, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-primary)', width: 120, outline: 'none' }} />
+                      )}
+                      <button onClick={() => setFilters(prev => prev.filter(x => x.id !== f.id))}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', display: 'flex', padding: 2 }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Sorts */}
+              {sorts.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>排序</span>
+                  {sorts.map(s => (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <select value={s.propertyId} onChange={e => setSorts(prev => prev.map(x => x.id === s.id ? { ...x, propertyId: e.target.value } : x))}
+                        style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>
+                        {propOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <select value={s.dir} onChange={e => setSorts(prev => prev.map(x => x.id === s.id ? { ...x, dir: e.target.value as 'asc' | 'desc' } : x))}
+                        style={{ fontSize: 12, padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>
+                        <option value="asc">遞增 ↑</option>
+                        <option value="desc">遞減 ↓</option>
+                      </select>
+                      <button onClick={() => setSorts(prev => prev.filter(x => x.id !== s.id))}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', display: 'flex', padding: 2 }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add buttons */}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={addFilter}
+                  style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+                  <Plus size={12} /> 新增篩選
+                </button>
+                <button onClick={addSort}
+                  style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+                  <ArrowUpDown size={12} /> 新增排序
+                </button>
+                {(filters.length + sorts.length) > 0 && (
+                  <button onClick={() => { setFilters([]); setSorts([]); }}
+                    style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: '#c93b37', cursor: 'pointer', marginLeft: 'auto' }}>
+                    清除全部
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* View Content + Side panels */}
       <div className="flex flex-1 overflow-hidden relative">

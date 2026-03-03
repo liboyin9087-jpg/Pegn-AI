@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { PanelLeft, Sparkles, Moon, Sun } from 'lucide-react';
+import { PanelLeft, Sparkles, Moon, Sun, Search, History, Zap } from 'lucide-react';
 import AuthPage from './components/AuthPage';
 import Sidebar from './components/Sidebar';
 import Editor from './components/Editor';
@@ -17,6 +17,10 @@ import { useCollections, useCollectionViews } from './hooks/useCollections';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
+import { ToastProvider, useToast } from './components/Toast';
+import { SearchModal } from './components/SearchModal';
+import { VersionHistory } from './components/VersionHistory';
+import { AutomationPanel } from './components/AutomationPanel';
 import {
   getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
   listWorkspaces, createWorkspace,
@@ -25,6 +29,7 @@ import {
   acceptInvite,
   listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
   getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
+  listFavorites, toggleFavorite, listTrash, restoreFromTrash, permanentDeleteFromTrash,
   type InboxNotification, type OfflineQueueMetricsSource,
 } from './api/client';
 
@@ -56,6 +61,14 @@ export default function App() {
   const [aiInitPrompt, setAiInitPrompt] = useState<string | undefined>();
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('pegn-theme') === 'dark');
 
+  // New feature state
+  const [favorites, setFavorites] = useState<any[]>([]);
+  const [trashItems, setTrashItems] = useState<any[]>([]);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
     localStorage.setItem('pegn-theme', darkMode ? 'dark' : 'light');
@@ -70,6 +83,18 @@ export default function App() {
     onToggleAI: () => setAiSheetOpen(o => !o),
     onShowHelp: () => setHelpOpen(o => !o),
   });
+
+  // ⌘F to open search modal
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchModalOpen(o => !o);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -130,6 +155,39 @@ export default function App() {
     setDocuments(docs || []);
     if (docs?.length > 0) setActiveDoc(docs[0]);
     if (isNew) setShowOnboarding(true);
+    // Load favorites and trash
+    try { const { documents: favs } = await listFavorites(); setFavorites(favs || []); } catch { /* ignore */ }
+    try { const { documents: trash } = await listTrash(); setTrashItems(trash || []); } catch { /* ignore */ }
+  };
+
+  const handleToggleFavorite = async (docId: string, currentlyFav: boolean) => {
+    try {
+      await toggleFavorite(docId, !currentlyFav);
+      if (currentlyFav) {
+        setFavorites(prev => prev.filter(d => d.id !== docId));
+      } else {
+        const doc = documents.find(d => d.id === docId);
+        if (doc) setFavorites(prev => [doc, ...prev]);
+      }
+      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, is_favorite: !currentlyFav } : d));
+    } catch (err) { console.error('toggleFavorite failed', err); }
+  };
+
+  const handleRestoreFromTrash = async (docId: string) => {
+    try {
+      await restoreFromTrash(docId);
+      const restored = trashItems.find(d => d.id === docId);
+      setTrashItems(prev => prev.filter(d => d.id !== docId));
+      if (restored) setDocuments(prev => [{ ...restored, deleted_at: null }, ...prev]);
+    } catch (err) { console.error('restoreFromTrash failed', err); }
+  };
+
+  const handlePermanentDelete = async (docId: string) => {
+    if (!confirm('確定要永久刪除？此操作無法復原。')) return;
+    try {
+      await permanentDeleteFromTrash(docId);
+      setTrashItems(prev => prev.filter(d => d.id !== docId));
+    } catch (err) { console.error('permanentDelete failed', err); }
   };
 
   const refreshInbox = useCallback(async (status: 'unread' | 'all' = 'all') => {
@@ -203,10 +261,12 @@ export default function App() {
   };
 
   const handleDeleteDoc = async (id: string) => {
-    if (!confirm('確定要刪除這份文件嗎？')) return;
+    if (!confirm('確定要將此文件移至垃圾桶嗎？')) return;
     try {
       await deleteDocument(id);
+      const doc = documents.find(d => d.id === id);
       setDocuments(prev => prev.filter(d => d.id !== id));
+      if (doc) setTrashItems(prev => [{ ...doc, deleted_at: new Date().toISOString() }, ...prev]);
       if (activeDoc?.id === id) {
         const remaining = documents.filter(d => d.id !== id);
         setActiveDoc(remaining[0] ?? null);
@@ -448,6 +508,7 @@ export default function App() {
   if (!user) return <AuthPage onAuth={handleAuth} />;
 
   return (
+    <ToastProvider>
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--color-surface)' }}>
       {/* Modals */}
       {showOnboarding && (
@@ -473,6 +534,95 @@ export default function App() {
         onMarkRead={handleMarkNotificationRead}
         onMarkAllRead={handleMarkAllNotificationsRead}
       />
+
+      {/* Search Modal */}
+      <SearchModal
+        open={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        workspaceId={workspace?.id}
+        token={getToken() ?? undefined}
+        onNavigateDoc={id => { handleNavigateDoc(id); setSearchModalOpen(false); }}
+      />
+
+      {/* Version History Drawer */}
+      <VersionHistory
+        open={versionHistoryOpen}
+        onClose={() => setVersionHistoryOpen(false)}
+        documentId={activeDoc?.id}
+        token={getToken() ?? undefined}
+        workspaceId={workspace?.id}
+        onRestored={() => { /* doc reload on restore */ }}
+      />
+
+      {/* Automation Panel Drawer */}
+      <AnimatePresence>
+        {automationsOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setAutomationsOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(0,0,0,0.3)' }}
+            />
+            <motion.div
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              style={{
+                position: 'fixed', right: 0, top: 0, bottom: 0, width: 480,
+                background: 'var(--color-surface)', borderLeft: '1px solid var(--color-border)',
+                zIndex: 901, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}
+            >
+              <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 600, fontSize: 15 }}>⚡ AI 自動化</span>
+                <button onClick={() => setAutomationsOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)' }}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <AutomationPanel workspaceId={workspace?.id} token={getToken() ?? undefined} />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Trash Panel */}
+      <AnimatePresence>
+        {trashOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setTrashOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(0,0,0,0.3)' }}
+            />
+            <motion.div
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              style={{
+                position: 'fixed', right: 0, top: 0, bottom: 0, width: 360,
+                background: 'var(--color-surface)', borderLeft: '1px solid var(--color-border)',
+                zIndex: 901, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}
+            >
+              <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 600, fontSize: 15 }}>🗑 垃圾桶</span>
+                <button onClick={() => setTrashOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)' }}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+                {trashItems.length === 0 ? (
+                  <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13 }}>垃圾桶是空的</div>
+                ) : trashItems.map(doc => (
+                  <div key={doc.id} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {doc.metadata?.icon ?? '📄'} {doc.title}
+                    </span>
+                    <button onClick={() => handleRestoreFromTrash(doc.id)} style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer', color: 'var(--color-text-secondary)' }}>還原</button>
+                    <button onClick={() => handlePermanentDelete(doc.id)} style={{ background: 'none', border: '1px solid #c93b37', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer', color: '#c93b37' }}>刪除</button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Command Bar */}
       <CommandBar
@@ -537,6 +687,11 @@ export default function App() {
                 }}
                 onLogout={handleLogout}
                 onOpenCommand={() => setCmdOpen(true)}
+                favorites={favorites}
+                trashCount={trashItems.length}
+                onOpenTrash={() => setTrashOpen(true)}
+                onOpenAutomations={() => setAutomationsOpen(true)}
+                onFavoriteDoc={handleToggleFavorite}
               />
             </ErrorBoundary>
           </motion.aside>
@@ -597,6 +752,30 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Search button */}
+            <button
+              onClick={() => setSearchModalOpen(true)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors"
+              style={{ color: 'var(--color-text-secondary)' }}
+              title="搜尋 (⌘F)"
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Search size={15} />
+            </button>
+            {/* Version history button */}
+            {activeDoc && (
+              <button
+                onClick={() => setVersionHistoryOpen(true)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors"
+                style={{ color: 'var(--color-text-secondary)' }}
+                title="版本歷史"
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-secondary)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <History size={15} />
+              </button>
+            )}
             {/* Online status — minimal dot indicator */}
             <div
               className="flex items-center gap-1"
@@ -696,5 +875,6 @@ export default function App() {
         </div>
       </main>
     </div>
+    </ToastProvider>
   );
 }

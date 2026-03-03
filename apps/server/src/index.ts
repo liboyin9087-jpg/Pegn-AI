@@ -44,6 +44,11 @@ import { registerBillingRoutes } from './routes/billing.js';
 import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { authMiddleware } from './middleware/auth.js';
+import { trashRouter } from './routes/trash.js';
+import { favoritesRouter } from './routes/favorites.js';
+import { versionsRouter } from './routes/versions.js';
+import { automationsRouter } from './routes/automations.js';
+import { startScheduler } from './services/automation.js';
 
 const app = express();
 app.use(cors({
@@ -87,6 +92,10 @@ registerCommentRoutes(app);
 registerInboxRoutes(app);
 registerOfflineObservabilityRoutes(app);
 registerBillingRoutes(app);
+app.use('/api/v1/trash',           trashRouter);
+app.use('/api/v1/favorites',       favoritesRouter);
+app.use('/api/v1/doc-versions',    versionsRouter);   // GET/POST /api/v1/doc-versions/:id/...
+app.use('/api/v1/automations',     automationsRouter);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {

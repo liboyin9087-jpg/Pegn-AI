@@ -550,6 +550,42 @@ export const exportCollection = async (id: string, format: 'csv' | 'json' = 'csv
   return res.blob();
 };
 
+// ── Favorites ────────────────────────────────────────────────
+export const listFavorites = () =>
+  api<{ documents: any[] }>('/favorites');
+export const toggleFavorite = (id: string, isFavorite: boolean) =>
+  api<any>(`/favorites/${id}`, { method: isFavorite ? 'POST' : 'DELETE' });
+
+// ── Trash ─────────────────────────────────────────────────────
+export const listTrash = () =>
+  api<{ documents: any[] }>('/trash');
+export const restoreFromTrash = (id: string) =>
+  api<any>(`/trash/${id}/restore`, { method: 'POST' });
+export const permanentDeleteFromTrash = (id: string) =>
+  api<any>(`/trash/${id}`, { method: 'DELETE' });
+
+// ── Document Versions ─────────────────────────────────────────
+export const listVersions = (docId: string) =>
+  api<{ versions: any[] }>(`/doc-versions/${docId}`);
+export const createVersion = (docId: string) =>
+  api<{ version: any }>(`/doc-versions/${docId}`, { method: 'POST' });
+export const restoreVersion = (docId: string, versionNumber: number) =>
+  api<{ document: any }>(`/doc-versions/${docId}/${versionNumber}/restore`, { method: 'POST' });
+
+// ── Automations ───────────────────────────────────────────────
+export const listAutomations = () =>
+  api<{ automations: any[] }>('/automations');
+export const createAutomation = (data: any) =>
+  api<{ automation: any }>('/automations', { method: 'POST', body: JSON.stringify(data) });
+export const updateAutomation = (id: string, data: any) =>
+  api<{ automation: any }>(`/automations/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const toggleAutomation = (id: string) =>
+  api<{ automation: any }>(`/automations/${id}/toggle`, { method: 'POST' });
+export const deleteAutomation = (id: string) =>
+  api<any>(`/automations/${id}`, { method: 'DELETE' });
+export const listAutomationRuns = (id: string) =>
+  api<{ runs: any[] }>(`/automations/${id}/runs`);
+
 // ── SSE helpers ──────────────────────────────────────────────
 export function sseStream(path: string, onData: (d: any) => void, onDone: () => void) {
   const token = getToken();

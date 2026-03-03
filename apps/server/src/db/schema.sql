@@ -511,4 +511,86 @@ CREATE TRIGGER update_usage_records_updated_at BEFORE UPDATE ON usage_records FO
 -- Phase 4: Document position for sidebar ordering
 -- ============================================================
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS position FLOAT DEFAULT 0;
+
+-- ============================================================
+-- Phase 5: Soft Delete / Favorites / Versioning / Automation
+-- ============================================================
+
+-- Soft delete + favorites on documents
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON documents(workspace_id, deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_documents_favorites ON documents(workspace_id, is_favorite) WHERE is_favorite = true;
+
+-- Document version history (snapshots at meaningful points)
+CREATE TABLE IF NOT EXISTS document_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    title TEXT,
+    content TEXT,
+    yjs_state BYTEA,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(document_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_document_versions_doc ON document_versions(document_id, version_number DESC);
+
+-- Page templates
+CREATE TABLE IF NOT EXISTS page_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT DEFAULT '📄',
+    cover TEXT,
+    content TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'general',
+    is_builtin BOOLEAN DEFAULT false,
+    use_count INTEGER DEFAULT 0,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_page_templates_workspace ON page_templates(workspace_id, category);
+
+-- AI Automation rules
+CREATE TABLE IF NOT EXISTS automations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT true,
+    trigger_type TEXT NOT NULL,           -- document.created | document.updated | property.changed | schedule.cron | agent.completed
+    trigger_config JSONB DEFAULT '{}',    -- { collection_id, property_name, cron_expr, ... }
+    conditions JSONB DEFAULT '[]',        -- [{ field, op, value }]  op: contains|eq|ne|gt|lt|regex|ai_class
+    actions JSONB NOT NULL DEFAULT '[]',  -- [{ type, config }]  type: run_agent|send_webhook|create_document|update_property|notify_user
+    run_count INTEGER DEFAULT 0,
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    last_error TEXT,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_automations_workspace ON automations(workspace_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_automations_trigger ON automations(trigger_type, enabled);
+
+-- Automation execution log
+CREATE TABLE IF NOT EXISTS automation_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    automation_id UUID NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    trigger_event JSONB,
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','success','failed','skipped')),
+    actions_executed JSONB DEFAULT '[]',
+    error TEXT,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    finished_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_automation_runs_automation ON automation_runs(automation_id, started_at DESC);
+
+DROP TRIGGER IF EXISTS update_automations_updated_at ON automations;
+CREATE TRIGGER update_automations_updated_at BEFORE UPDATE ON automations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_page_templates_updated_at ON page_templates;
+CREATE TRIGGER update_page_templates_updated_at BEFORE UPDATE ON page_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE INDEX IF NOT EXISTS idx_documents_workspace_position ON documents(workspace_id, position);
