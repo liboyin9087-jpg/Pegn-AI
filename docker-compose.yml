@@ -30,6 +30,15 @@ services:
       timeout: 3s
       retries: 3
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    restart: unless-stopped
+
   api:
     build:
       context: ./apps/server
@@ -42,11 +51,15 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: pegn-ai-server
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
       interval: 30s

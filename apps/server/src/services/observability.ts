@@ -1,4 +1,15 @@
 import { Request, Response } from 'express';
+import { trace, metrics, SpanStatusCode, Span } from '@opentelemetry/api';
+
+// ── OTel instruments ───────────────────────────────────────────────────────
+const tracer = trace.getTracer('pegn-ai-server');
+const meter  = metrics.getMeter('pegn-ai-server');
+
+const httpRequestCounter  = meter.createCounter('http_requests_total',      { description: 'Total HTTP requests' });
+const httpDurationHist    = meter.createHistogram('http_request_duration_ms', { description: 'HTTP request duration in ms', unit: 'ms' });
+const dbQueryCounter      = meter.createCounter('db_queries_total',          { description: 'Total DB queries' });
+const dbDurationHist      = meter.createHistogram('db_query_duration_ms',    { description: 'DB query duration in ms', unit: 'ms' });
+const searchDurationHist  = meter.createHistogram('search_duration_ms',      { description: 'Search operation duration in ms', unit: 'ms' });
 
 export interface MetricData {
   name: string;
@@ -44,6 +55,30 @@ export class ObservabilityService {
     }
   }
 
+  // ── OTel span utility ──────────────────────────────────────────────────
+  async withSpan<T>(
+    spanName: string,
+    fn: (span: Span) => Promise<T>,
+    attributes?: Record<string, string | number | boolean>,
+  ): Promise<T> {
+    return tracer.startActiveSpan(spanName, async (span: Span) => {
+      if (attributes) {
+        span.setAttributes(attributes);
+      }
+      try {
+        const result = await fn(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+        span.recordException(err as Error);
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
+  }
+
   // Performance monitoring
   recordRequestDuration(path: string, duration: number, statusCode: number, method = 'UNKNOWN'): void {
     this.recordMetric('http_request_duration', duration, {
@@ -57,18 +92,29 @@ export class ObservabilityService {
       method,
       status_code: statusCode.toString()
     });
+
+    // OTel instruments
+    const attrs = { 'http.method': method, 'http.route': path, 'http.status_code': statusCode };
+    httpRequestCounter.add(1, attrs);
+    httpDurationHist.record(duration, attrs);
   }
 
   recordDatabaseQuery(query: string, duration: number, success: boolean): void {
+    const queryType = this.getQueryType(query);
     this.recordMetric('database_query_duration', duration, {
-      query_type: this.getQueryType(query),
+      query_type: queryType,
       success: success.toString()
     });
 
     this.recordMetric('database_queries_total', 1, {
-      query_type: this.getQueryType(query),
+      query_type: queryType,
       success: success.toString()
     });
+
+    // OTel instruments
+    const attrs = { 'db.operation': queryType, 'db.success': success };
+    dbQueryCounter.add(1, attrs);
+    dbDurationHist.record(duration, attrs);
   }
 
   recordCRDTSync(documentId: string, duration: number, success: boolean): void {
@@ -87,6 +133,9 @@ export class ObservabilityService {
     });
 
     this.recordMetric('search_results_count', resultCount);
+
+    // OTel instruments
+    searchDurationHist.record(duration, { 'search.result_count': resultCount });
   }
 
   // Logging

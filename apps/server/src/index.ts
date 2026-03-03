@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './tracing.js';   // OTel SDK 必須在 express/pg/http 載入前初始化
 
 // ── Fix 4: JWT_SECRET 啟動強制驗證 ──────────────────────────────
 const jwtSecret = process.env.JWT_SECRET;
