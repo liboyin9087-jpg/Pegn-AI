@@ -16,7 +16,7 @@ GITHUB_REPO="Pegn-AI"
 # ── 待設定的 Secret 值（執行前填入）────────────────────────
 DATABASE_URL="postgresql://USER:PASS@HOST:5432/ai_native"
 JWT_SECRET="$(openssl rand -hex 32)"
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+GEMINI_API_KEY="${GEMINI_API_KEY:-AIzaSyBEYZ27hXkXFsSskjZthZpfLYlO9aT_L_M}"
 REDIS_URL="rediss://default:PASS@HOST:PORT"  # Upstash Redis URL
 # ────────────────────────────────────────────────────────────
 

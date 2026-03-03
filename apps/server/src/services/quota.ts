@@ -43,6 +43,11 @@ export async function checkQuota(
   type: ResourceType,
   requestedAmount = 1
 ): Promise<{ allowed: boolean; used: number; limit: number; remaining: number }> {
+  // QUOTA_DISABLED=true → always allow (unlimited API mode)
+  if (process.env.QUOTA_DISABLED === 'true') {
+    return { allowed: true, used: 0, limit: Infinity, remaining: Infinity };
+  }
+
   const p = pool;
   if (!p) return { allowed: true, used: 0, limit: Infinity, remaining: Infinity };
 

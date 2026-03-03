@@ -52,10 +52,24 @@ import { startScheduler } from './services/automation.js';
 
 const app = express();
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5177',
+  origin: (origin, cb) => {
+    // Allow: explicit CORS_ORIGIN list, Cloud Run *.run.app, localhost, no-origin (curl/server-to-server)
+    if (!origin) return cb(null, true);
+    const allowed = (process.env.CORS_ORIGIN ?? '').split(',').map(s => s.trim()).filter(Boolean);
+    if (
+      allowed.includes(origin) ||
+      allowed.includes('*') ||
+      /^https:\/\/[\w-]+-[\w-]+\.run\.app$/.test(origin) ||
+      /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)
+    ) {
+      return cb(null, true);
+    }
+    cb(null, process.env.CORS_ALLOW_ALL === 'true');
+  },
   credentials: true,
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
 // Rate limiting
 app.use('/api/v1/auth', authLimiter);
