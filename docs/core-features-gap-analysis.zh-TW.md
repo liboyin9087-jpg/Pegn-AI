@@ -121,3 +121,69 @@
 - Epic 4：全鏈路 observability（Trace + Cost + SLA dashboard）。
 
 > 建議先做 Epic 1 + 2，因為它們會直接決定你「AI 回答品質可驗證」是否成立。
+
+---
+
+## 7) 以 Notion PM 視角檢核（完整度 / 實作度 / 差異化）
+
+### 7.1 完整度對標（上市產品標準）
+
+| 能力面向 | Notion 常見標準 | Pegn-AI 現況 | 完整度 |
+|---|---|---|---|
+| 多人協作 | 穩定即時同步、權限分層、歷史回復、多人游標可視化 | 已有 Yjs + Hocuspocus + RBAC + snapshot，缺壓測報告與回復演練證據 | **75%** |
+| 自動化 | 資料庫自動化規則、Agent/流程編排、Webhook 事件驅動 | 已有多 Agent、Webhook、PromptOps；缺「可視化規則編輯」與端到端回歸 | **65%** |
+| 搜尋引擎 | 全文 + 語意 + 關聯查詢、排序可解釋、查詢效能可觀測 | 已有 BM25 + 向量 + GraphRAG；缺評測基準、debug ranking 欄位、SLA 儀表板 | **70%** |
+| UI/UX 品質 | 一致設計語言、空狀態/錯誤態完善、快捷操作流暢 | 整體結構與互動完整，缺大規模可用性驗證（新手引導/快捷鍵覆蓋） | **72%** |
+
+### 7.2 與 Notion 的差異化核心（應主打）
+
+1. **AI-First 而非 AI 附加功能**：PromptOps、Supervisor-Worker、SSE 串流是核心工作流，不是外掛。
+2. **GraphRAG + 知識圖譜操作閉環**：不只搜尋結果，還能視覺化、編輯、持久化知識關係。
+3. **Quota/成本治理內建**：具備工作區級 token/call/run 配額，較適合企業導入與 FinOps 管理。
+4. **離線 mutation replay**：對行動/弱網情境友善，可做「可靠編輯不中斷」產品敘事。
+
+---
+
+## 8) 上市級補齊清單（強調多人協作 + 自動化 + 搜尋）
+
+### P0（必做，上市前）
+
+- [ ] **協作可靠性報告**：10/30/50 併發編輯壓測、衝突收斂時間、資料一致性驗證。
+- [ ] **自動化端到端驗證**：Webhook → Agent run → Artifact 產出完整 happy-path / retry-path 測試。
+- [ ] **搜尋品質門檻**：固定測試集 + Recall@10 / MRR / nDCG@10 baseline，納入 CI gate。
+- [ ] **UI/UX 上市檢核**：空狀態、錯誤態、離線態、無權限態、載入骨架、快捷鍵清單全覆蓋。
+
+### P1（上市後 1 個版本內）
+
+- [ ] 視覺化 automation rule builder（條件、觸發器、動作鏈）。
+- [ ] 搜尋 explainability（BM25/向量/圖譜分數拆解）與 ranking debug panel。
+- [ ] 協作審計追蹤（誰在何時修改何 block / 關鍵欄位）。
+- [ ] 多租戶資料隔離（RLS）與企業合規報告模板。
+
+---
+
+## 9) 建議「完整實作檔案」清單（可直接開工）
+
+> 下列是以現有專案結構為基礎、可直接補齊的檔案級任務（最小侵入）。
+
+1. **協作壓測與回復驗證**
+   - `apps/server/src/services/sync.ts`（補強觀測欄位）
+   - `apps/server/src/routes/sync.ts`（新增診斷資訊端點）
+   - `apps/server/src/services/snapshots.ts`（恢復流程 smoke test hook）
+
+2. **自動化與 Agent 端到端**
+   - `apps/server/src/routes/webhooks.ts`（delivery retry/trace metadata）
+   - `apps/server/src/routes/agent.ts`（event schema version + telemetry 欄位）
+   - `apps/server/src/services/agent.ts`（worker 失敗分類與可重試策略）
+
+3. **搜尋引擎強化**
+   - `apps/server/src/routes/search.ts`（feature flag 控制 debug fields）
+   - `apps/server/src/services/search.ts`（分數拆解輸出）
+   - `apps/server/src/services/graphrag.ts`（查詢耗時與命中來源標記）
+
+4. **高品質 UI/UX**
+   - `apps/web/src/components/Editor.tsx`（空/錯誤/離線態一致化）
+   - `apps/web/src/components/AgentPanel.tsx`（automation 可見性、步驟狀態）
+   - `apps/web/src/components/KGPanel.tsx`（搜尋解釋與可操作回饋）
+
+---
