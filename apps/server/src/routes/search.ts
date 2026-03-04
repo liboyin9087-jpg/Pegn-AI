@@ -1,0 +1,258 @@
+import type { Express, Request, Response } from 'express';
+import { authMiddleware } from '../middleware/auth.js';
+import { checkPermission } from '../middleware/rbac.js';
+import { searchService } from '../services/search.js';
+import { observability } from '../services/observability.js';
+
+interface SearchRequest {
+  query: string;
+  workspace_id?: string;
+  workspaceId?: string;
+  limit?: number;
+  offset?: number;
+  filters?: {
+    blockType?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  };
+  hybrid?: boolean;
+  vectorWeight?: number;
+}
+
+export function registerSearchRoutes(app: Express): void {
+  // Main search endpoint
+  app.post('/api/v1/search', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+      const searchRequest: SearchRequest = req.body;
+      const workspaceId = searchRequest.workspace_id || searchRequest.workspaceId;
+
+      if (!searchRequest.query || typeof searchRequest.query !== 'string') {
+        res.status(400).json({ error: 'Query is required and must be a string' });
+        return;
+      }
+
+      // Dates are passed as strings to the search service
+      const results = await searchService.search({
+        query: searchRequest.query,
+        workspaceId,
+        limit: searchRequest.limit || 20,
+        offset: searchRequest.offset || 0,
+        filters: searchRequest.filters,
+        hybrid: searchRequest.hybrid !== false,
+        vectorWeight: searchRequest.vectorWeight
+      });
+
+      const duration = Date.now() - startTime;
+      observability.recordSearchOperation(searchRequest.query, duration, results.results.length);
+
+      res.json({
+        results: results.results,
+        total: results.total,
+        query: searchRequest.query,
+        duration,
+        limit: searchRequest.limit || 20,
+        offset: searchRequest.offset || 0
+      });
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      observability.error('Search failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: req.body?.query,
+        duration
+      });
+
+      res.status(500).json({
+        error: 'Search failed',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Search suggestions endpoint
+  app.get('/api/v1/search/suggestions', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+    try {
+      const { q: query, workspace_id, workspaceId, limit = 5 } = req.query;
+      const resolvedWorkspaceId =
+        (typeof workspace_id === 'string' ? workspace_id : undefined) ||
+        (typeof workspaceId === 'string' ? workspaceId : undefined);
+
+      if (!query || typeof query !== 'string') {
+        res.status(400).json({ error: 'Query parameter "q" is required' });
+        return;
+      }
+
+      const suggestions = await searchService.getSuggestions(
+        query,
+        resolvedWorkspaceId as string,
+        parseInt(limit as string)
+      );
+
+      res.json({ suggestions });
+    } catch (error) {
+      observability.error('Search suggestions failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: req.query.q
+      });
+
+      res.status(500).json({
+        error: 'Failed to get suggestions',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Reindex document endpoint
+  app.post('/api/v1/search/reindex/:documentId', authMiddleware, checkPermission('workspace:admin', 'document'), async (req: Request, res: Response) => {
+    try {
+      const { documentId } = req.params;
+
+      await searchService.reindexDocument(documentId);
+
+      observability.info('Document reindexed', { documentId });
+      res.json({ message: 'Document reindexed successfully', documentId });
+    } catch (error) {
+      observability.error('Document reindex failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        documentId: req.params.documentId
+      });
+
+      res.status(500).json({
+        error: 'Failed to reindex document',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Advanced search with filters
+  app.post('/api/v1/search/advanced', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+      const {
+        query,
+        workspace_id,
+        workspaceId,
+        filters = {},
+        limit = 20,
+        offset = 0,
+        sortBy = 'relevance',
+        sortOrder = 'desc'
+      } = req.body;
+
+      const resolvedWorkspaceId = workspace_id || workspaceId;
+
+      if (!query) {
+        res.status(400).json({ error: 'Query is required' });
+        return;
+      }
+
+      // Enhanced search with additional options
+      const searchOptions = {
+        query,
+        workspaceId: resolvedWorkspaceId,
+        limit,
+        offset,
+        filters: {
+          ...filters,
+          // Dates are passed as strings to the search service
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo
+        },
+        hybrid: true,
+        vectorWeight: 0.5
+      };
+
+      const results = await searchService.search(searchOptions);
+
+      // Apply additional sorting if needed
+      let sortedResults = results.results;
+      if (sortBy !== 'relevance') {
+        sortedResults.sort((a, b) => {
+          let comparison = 0;
+
+          switch (sortBy) {
+            case 'date':
+              comparison = a.created_at.getTime() - b.created_at.getTime();
+              break;
+            case 'title':
+              comparison = a.document_title.localeCompare(b.document_title);
+              break;
+            default:
+              comparison = a.score - b.score;
+          }
+
+          return sortOrder === 'desc' ? -comparison : comparison;
+        });
+      }
+
+      const duration = Date.now() - startTime;
+      observability.recordSearchOperation(query, duration, results.results.length);
+
+      res.json({
+        results: sortedResults,
+        total: results.total,
+        query,
+        filters,
+        sortBy,
+        sortOrder,
+        duration,
+        limit,
+        offset
+      });
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      observability.error('Advanced search failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: req.body?.query,
+        duration
+      });
+
+      res.status(500).json({
+        error: 'Advanced search failed',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // ── GET /api/v1/search/index-status ─────────────────────────────────────
+  app.get('/api/v1/search/index-status', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+    const workspaceId = (req as any).workspaceId ?? req.query.workspace_id as string;
+    if (!workspaceId) return res.status(400).json({ error: 'workspace_id required' });
+    try {
+      const { pool } = await import('../db/client.js');
+      if (!pool) return res.status(503).json({ error: 'DB unavailable' });
+
+      const [docCount, blockCount, vecCount] = await Promise.all([
+        pool.query<{ count: string }>(
+          `SELECT COUNT(DISTINCT document_id) AS count FROM search_index WHERE workspace_id = $1`, [workspaceId]
+        ),
+        pool.query<{ count: string }>(
+          `SELECT COUNT(*) AS count FROM search_index WHERE workspace_id = $1`, [workspaceId]
+        ),
+        pool.query<{ count: string }>(
+          `SELECT COUNT(*) AS count FROM search_index WHERE workspace_id = $1 AND embedding IS NOT NULL`, [workspaceId]
+        ),
+      ]);
+
+      const totalDocs = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM documents WHERE workspace_id = $1`, [workspaceId]
+      );
+
+      const indexed = parseInt(docCount.rows[0]?.count ?? '0');
+      const total   = parseInt(totalDocs.rows[0]?.count  ?? '0');
+
+      res.json({
+        indexed_documents: indexed,
+        total_documents: total,
+        indexed_blocks: parseInt(blockCount.rows[0]?.count ?? '0'),
+        vector_indexed_blocks: parseInt(vecCount.rows[0]?.count ?? '0'),
+        coverage: total > 0 ? Math.round((indexed / total) * 100) : 0,
+        status: indexed === 0 ? 'empty' : indexed < total ? 'partial' : 'complete',
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get index status' });
+    }
+  });
+}

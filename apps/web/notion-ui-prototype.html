@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pegn AI WorkOS — Notion 風格 UI 原型</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    /* =============================================
+       DESIGN TOKENS
+       ============================================= */
+    :root {
+      --surface:          #ffffff;
+      --surface-sb:       #fbfbfa;
+      --surface-hover:    rgba(0, 0, 0, 0.04);
+      --surface-active:   rgba(35, 131, 226, 0.08);
+      --border:           #e9e9e5;
+      --border-strong:    #d0d0cb;
+      --text-1:           #37352f;
+      --text-2:           #73726e;
+      --text-3:           #9b9b97;
+      --text-ph:          #b8b8b0;
+      --accent:           #2383e2;
+      --accent-h:         #1a6dca;
+      --accent-bg:        rgba(35, 131, 226, 0.10);
+      --green:            #0a7a4c;
+      --green-bg:         #e4f5ed;
+      --yellow:           #b87309;
+      --yellow-bg:        #fef3dc;
+      --red:              #c93b37;
+      --purple:           #7c3aed;
+      --shadow-md:        0 4px 12px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.04);
+      --shadow-lg:        0 8px 28px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05);
+      --r-sm: 4px; --r-md: 6px; --r-lg: 10px;
+    }
+
+    .dark {
+      --surface:       #191919;
+      --surface-sb:    #111111;
+      --surface-hover: rgba(255, 255, 255, 0.055);
+      --surface-active:rgba(35, 131, 226, 0.14);
+      --border:        #2e2e2e;
+      --border-strong: #3d3d3d;
+      --text-1:        #e8e8e3;
+      --text-2:        #9b9b97;
+      --text-3:        #6b6b68;
+      --text-ph:       #4a4a47;
+      --accent-bg:     rgba(35, 131, 226, 0.14);
+      --green-bg:      rgba(10, 122, 76, 0.14);
+      --yellow-bg:     rgba(184, 115, 9, 0.14);
+    }
+
+    /* =============================================
+       RESET & BASE
+       ============================================= */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--surface);
+      color: var(--text-1);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      font-size: 16px;
+      line-height: 1;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button { font-family: inherit; cursor: pointer; }
+    [contenteditable] { outline: none; }
+
+    /* =============================================
+       SIDEBAR
+       ============================================= */
+    #sidebar {
+      width: 240px;
+      min-width: 240px;
+      height: 100vh;
+      background: var(--surface-sb);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transition: width 0.22s cubic-bezier(0.16,1,0.3,1),
+                  min-width 0.22s cubic-bezier(0.16,1,0.3,1),
+                  background 0.2s, border-color 0.2s;
+      overflow: hidden;
+    }
+    #sidebar.collapsed { width: 0; min-width: 0; }
+
+    /* workspace header */
+    .ws-header {
+      display: flex; align-items: center; gap: 8px;
+      margin: 4px 4px 0; padding: 7px 8px;
+      border-radius: var(--r-sm); cursor: pointer;
+      transition: background 0.12s;
+      flex-shrink: 0;
+    }
+    .ws-header:hover { background: var(--surface-hover); }
+    .ws-avatar {
+      width: 22px; height: 22px; border-radius: 5px;
+      background: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
+    }
+    .ws-name { font-size: 14px; font-weight: 600; color: var(--text-1); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ws-chevron { font-size: 10px; color: var(--text-3); flex-shrink: 0; }
+
+    /* search */
+    .sb-search {
+      display: flex; align-items: center; gap: 6px;
+      margin: 3px 8px; padding: 5px 8px;
+      border-radius: var(--r-sm); cursor: pointer;
+      transition: background 0.12s;
+    }
+    .sb-search:hover { background: var(--surface-hover); }
+    .sb-search-label { font-size: 13px; color: var(--text-2); flex: 1; }
+    .sb-search-kbd {
+      font-size: 10px; color: var(--text-3);
+      background: var(--surface-hover); border: 1px solid var(--border);
+      border-radius: 3px; padding: 1px 4px;
+    }
+
+    /* quick actions row */
+    .sb-actions { display: flex; gap: 1px; margin: 2px 8px 4px; }
+    .sb-action {
+      flex: 1; display: flex; align-items: center; gap: 5px;
+      padding: 5px 7px; border-radius: var(--r-sm);
+      font-size: 13px; color: var(--text-2); background: none; border: none;
+      transition: background 0.12s;
+    }
+    .sb-action:hover { background: var(--surface-hover); color: var(--text-1); }
+    .sb-action .badge {
+      margin-left: auto; font-size: 10px; font-weight: 600;
+      background: var(--red); color: #fff;
+      padding: 1px 5px; border-radius: 10px;
+    }
+
+    /* divider */
+    .sb-divider { height: 1px; background: var(--border); margin: 5px 8px; }
+
+    /* scrollable section */
+    .sb-scroll { flex: 1; overflow-y: auto; padding-bottom: 6px; }
+    .sb-scroll::-webkit-scrollbar { width: 3px; }
+    .sb-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.10); border-radius: 2px; }
+
+    /* section header */
+    .sb-section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 12px 2px;
+      font-size: 11px; font-weight: 600; color: var(--text-3);
+      letter-spacing: 0.045em; text-transform: uppercase;
+    }
+    .sb-section-add {
+      font-size: 15px; color: var(--text-3); border: none; background: none;
+      width: 18px; height: 18px; border-radius: 3px; display: flex; align-items: center; justify-content: center;
+      transition: background 0.1s, color 0.1s;
+    }
+    .sb-section-add:hover { background: var(--surface-hover); color: var(--text-1); }
+
+    /* nav item */
+    .nav-item {
+      display: flex; align-items: center;
+      height: 28px; margin: 0 4px;
+      padding: 0 8px;
+      border-radius: var(--r-sm);
+      cursor: pointer; position: relative;
+      transition: background 0.1s;
+    }
+    .nav-item:hover { background: var(--surface-hover); }
+    .nav-item.active { background: var(--surface-active); }
+
+    .nav-expand {
+      width: 18px; height: 18px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; color: var(--text-3);
+      border-radius: 3px; transition: background 0.1s, transform 0.15s;
+    }
+    .nav-expand:hover { background: rgba(0,0,0,0.07); }
+    .nav-expand.open { transform: rotate(90deg); }
+    .nav-icon { font-size: 14px; flex-shrink: 0; margin: 0 3px 0 1px; }
+    .nav-title {
+      font-size: 13.5px; flex: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text-1);
+      font-weight: 400;
+    }
+    .nav-item.active .nav-title { color: var(--accent); font-weight: 500; }
+    .nav-actions { display: none; gap: 1px; margin-left: 4px; }
+    .nav-item:hover .nav-actions { display: flex; }
+    .nav-action {
+      width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-3); border-radius: 3px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .nav-action:hover { background: rgba(0,0,0,0.07); color: var(--text-1); }
+
+    /* nesting */
+    .d1 { padding-left: 20px; }
+    .d2 { padding-left: 36px; }
+    .d3 { padding-left: 52px; }
+
+    /* sidebar footer */
+    .sb-footer {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 8px 10px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .user-avatar {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
+      cursor: pointer;
+    }
+    .user-name { font-size: 13px; font-weight: 500; flex: 1; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .icon-btn {
+      width: 28px; height: 28px; border-radius: var(--r-sm);
+      display: flex; align-items: center; justify-content: center;
+      border: none; background: transparent; color: var(--text-2); font-size: 14px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .icon-btn:hover { background: var(--surface-hover); color: var(--text-1); }
+
+    /* =============================================
+       MAIN
+       ============================================= */
+    #main {
+      flex: 1; display: flex; flex-direction: column;
+      min-width: 0; overflow: hidden;
+    }
+
+    /* TOP BAR */
+    #topbar {
+      height: 44px; min-height: 44px;
+      display: flex; align-items: center;
+      padding: 0 12px; gap: 6px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      transition: background 0.2s, border-color 0.2s;
+      flex-shrink: 0;
+    }
+    .tb-left { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+    .tb-right { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+    /* breadcrumb */
+    .breadcrumb { display: flex; align-items: center; gap: 1px; min-width: 0; }
+    .bc-item {
+      display: flex; align-items: center; gap: 4px;
+      padding: 3px 6px; border-radius: 4px;
+      font-size: 13px; color: var(--text-2); cursor: pointer; white-space: nowrap;
+      transition: background 0.1s, color 0.1s;
+    }
+    .bc-item:hover { background: var(--surface-hover); color: var(--text-1); }
+    .bc-item.current { color: var(--text-1); font-weight: 500; }
+    .bc-sep { font-size: 12px; color: var(--text-3); padding: 0 1px; flex-shrink: 0; }
+
+    /* presence avatars */
+    .presence { display: flex; align-items: center; }
+    .p-avatar {
+      width: 24px; height: 24px; border-radius: 50%;
+      border: 2px solid var(--surface);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9.5px; font-weight: 700; color: #fff;
+      margin-left: -6px; flex-shrink: 0;
+      cursor: pointer; position: relative;
+    }
+    .p-avatar:first-child { margin-left: 0; }
+
+    /* top bar buttons */
+    .tb-btn {
+      height: 28px; padding: 0 9px; border-radius: var(--r-sm);
+      border: 1px solid var(--border);
+      font-size: 13px; font-weight: 500;
+      background: transparent; color: var(--text-1);
+      display: flex; align-items: center; gap: 4px;
+      transition: background 0.1s;
+    }
+    .tb-btn:hover { background: var(--surface-hover); }
+    .tb-btn.ai-btn {
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      color: #fff; border-color: transparent;
+      padding: 0 10px;
+    }
+    .tb-btn.ai-btn:hover { opacity: 0.88; background: linear-gradient(135deg, var(--accent), var(--purple)); }
+    .online-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+    /* =============================================
+       CONTENT
+       ============================================= */
+    #content {
+      flex: 1; overflow-y: auto; background: var(--surface);
+      transition: background 0.2s;
+      position: relative;
+    }
+    #content::-webkit-scrollbar { width: 5px; }
+    #content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.09); border-radius: 3px; }
+
+    /* page views */
+    .pview { display: none; }
+    .pview.active { display: block; animation: fadeIn 0.13s ease-out; }
+
+    /* COVER */
+    .cover {
+      width: 100%; height: 180px;
+      position: relative; overflow: hidden; flex-shrink: 0;
+    }
+    .cover.g1 { background: linear-gradient(135deg, #2383e2 0%, #7c3aed 100%); }
+    .cover.g2 { background: linear-gradient(135deg, #0a7a4c 0%, #2383e2 100%); }
+    .cover.g3 { background: linear-gradient(140deg, #b87309 0%, #c93b37 60%, #7c3aed 100%); }
+    .cover.g4 { background: linear-gradient(120deg, #1a1915 0%, #2d2d2d 50%, #37352f 100%); }
+    .cover-overlay {
+      position: absolute; bottom: 10px; right: 14px;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .cover:hover .cover-overlay { opacity: 1; }
+    .cover-btn {
+      font-size: 12px; color: rgba(255,255,255,0.8);
+      background: rgba(0,0,0,0.22); border: none; border-radius: 4px;
+      padding: 4px 9px; cursor: pointer; font-family: inherit;
+      transition: background 0.1s;
+    }
+    .cover-btn:hover { background: rgba(0,0,0,0.35); }
+
+    /* PAGE WRAPPER — the key Notion-style centering */
+    .pw {
+      max-width: 900px; margin: 0 auto;
+      padding: 0 96px;
+    }
+    @media (max-width: 900px) { .pw { padding: 0 28px; } }
+
+    /* page icon */
+    .pg-icon-row { padding: 14px 0 0; }
+    .pg-icon { font-size: 54px; line-height: 1.1; display: inline-block; cursor: pointer; }
+
+    /* add cover/icon row — shows on wrapper hover */
+    .pg-meta-btns {
+      display: flex; gap: 4px; margin: 5px 0 4px;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .pw:hover .pg-meta-btns { opacity: 1; }
+    .pg-meta-btn {
+      font-size: 12px; color: var(--text-3);
+      padding: 3px 8px; border-radius: 4px; border: none;
+      background: transparent; font-family: inherit;
+      display: flex; align-items: center; gap: 4px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .pg-meta-btn:hover { background: var(--surface-hover); color: var(--text-2); }
+
+    /* page title */
+    .pg-title {
+      font-size: 40px; font-weight: 700; line-height: 1.18;
+      color: var(--text-1); letter-spacing: -0.022em;
+      padding: 3px 0 12px; width: 100%;
+      border: none; background: transparent; display: block;
+    }
+    .pg-title:empty::before {
+      content: attr(data-ph); color: var(--text-ph); pointer-events: none;
+    }
+
+    /* page body */
+    .pg-body { padding: 4px 0 100px; }
+
+    /* prose */
+    .prose { font-size: 16px; line-height: 1.72; color: var(--text-1); }
+    .prose p { margin-bottom: 5px; }
+    .prose h2 {
+      font-size: 1.45rem; font-weight: 600;
+      margin: 30px 0 8px; letter-spacing: -0.014em; line-height: 1.3;
+    }
+    .prose h3 {
+      font-size: 1.18rem; font-weight: 600;
+      margin: 22px 0 6px; letter-spacing: -0.01em;
+    }
+    .prose ul { padding-left: 1.5em; margin-bottom: 6px; }
+    .prose ol { padding-left: 1.5em; margin-bottom: 6px; }
+    .prose li { margin-bottom: 3px; line-height: 1.65; }
+    .prose blockquote {
+      border-left: 3px solid var(--border-strong);
+      padding: 2px 0 2px 14px; color: var(--text-2);
+      margin: 14px 0;
+    }
+    .prose code {
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      font-size: 0.87em; background: rgba(0,0,0,0.055);
+      border-radius: 3px; padding: 1px 5px;
+    }
+    .dark .prose code { background: rgba(255,255,255,0.095); }
+    .prose pre {
+      background: #f7f6f2; border-radius: 7px;
+      padding: 16px 18px; overflow-x: auto; margin: 14px 0;
+      border: 1px solid var(--border);
+    }
+    .dark .prose pre { background: #222220; }
+    .prose pre code {
+      background: none; padding: 0;
+      font-size: 13.5px; line-height: 1.65; color: var(--text-1);
+    }
+    .prose a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(35,131,226,0.35); }
+    .prose a:hover { text-decoration-color: var(--accent); }
+
+    /* callout */
+    .callout {
+      border-radius: 7px; padding: 12px 14px; margin: 12px 0;
+      display: flex; gap: 10px; font-size: 15px; line-height: 1.64;
+    }
+    .callout.info { background: rgba(35,131,226,0.09); border-left: 3px solid var(--accent); }
+    .callout.tip  { background: var(--green-bg);  border-left: 3px solid var(--green); }
+    .callout.warn { background: var(--yellow-bg); border-left: 3px solid var(--yellow); }
+    .callout-icon { font-size: 17px; flex-shrink: 0; line-height: 1.7; }
+
+    /* todo */
+    .todo { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 5px; font-size: 15px; line-height: 1.6; }
+    .todo-box {
+      width: 16px; height: 16px; border-radius: 4px;
+      border: 1.5px solid var(--border-strong); flex-shrink: 0; margin-top: 3px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: background 0.12s, border-color 0.12s;
+    }
+    .todo-box.done { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 10px; }
+    .todo-text.done { text-decoration: line-through; color: var(--text-3); }
+
+    /* wiki-link */
+    .wikilink { color: var(--accent); border-bottom: 1px solid rgba(35,131,226,0.35); cursor: pointer; }
+    .wikilink:hover { background: var(--accent-bg); border-radius: 2px; }
+
+    /* =============================================
+       DATABASE
+       ============================================= */
+    .db-icon-title { display: flex; align-items: center; gap: 10px; }
+    .db-title-text { font-size: 32px; font-weight: 700; letter-spacing: -0.018em; line-height: 1.2; }
+
+    .db-tabs {
+      display: flex; align-items: flex-end; gap: 0;
+      border-bottom: 1px solid var(--border); margin-top: 18px;
+    }
+    .db-tab {
+      display: flex; align-items: center; gap: 5px;
+      padding: 7px 12px; font-size: 13px; font-weight: 500;
+      color: var(--text-3); border: none; background: transparent;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 0.1s;
+    }
+    .db-tab:hover { color: var(--text-1); }
+    .db-tab.active { color: var(--text-1); border-bottom-color: var(--text-1); }
+    .db-tab-new { margin-left: 4px; font-size: 12px; color: var(--text-3); padding: 7px 8px; border: none; background: transparent; }
+    .db-tab-new:hover { color: var(--text-1); }
+
+    .db-toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 0 6px; }
+    .db-tool {
+      height: 26px; padding: 0 8px; border-radius: 4px;
+      border: none; font-size: 12px; font-weight: 500;
+      background: transparent; color: var(--text-2); font-family: inherit;
+      display: flex; align-items: center; gap: 4px; transition: background 0.1s;
+    }
+    .db-tool:hover { background: var(--surface-hover); color: var(--text-1); }
+    .db-new {
+      margin-left: auto; height: 28px; padding: 0 11px;
+      border-radius: var(--r-sm); background: var(--accent); color: #fff;
+      border: none; font-size: 13px; font-weight: 500; font-family: inherit;
+      transition: opacity 0.1s;
+    }
+    .db-new:hover { opacity: 0.88; }
+
+    .db-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .db-table th {
+      text-align: left; padding: 5px 10px;
+      font-size: 12px; font-weight: 600; color: var(--text-2);
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .db-table td {
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
+      vertical-align: middle; line-height: 1.4;
+    }
+    .db-table tbody tr:hover td { background: var(--surface-hover); }
+    .db-table tbody tr:last-child td { border-bottom: none; }
+    .db-add-row {
+      padding: 8px 10px; font-size: 13px; color: var(--text-3);
+      cursor: pointer; border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .db-add-row:hover { background: var(--surface-hover); color: var(--text-1); }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 8px; border-radius: 11px; font-size: 12px; font-weight: 500;
+    }
+    .chip.done   { background: var(--green-bg);  color: var(--green); }
+    .chip.prog   { background: var(--yellow-bg); color: var(--yellow); }
+    .chip.todo   { background: rgba(0,0,0,0.06); color: var(--text-2); }
+    .chip.blue   { background: var(--accent-bg); color: var(--accent); }
+    .chip.purple { background: rgba(124,58,237,0.10); color: var(--purple); }
+    .dark .chip.todo { background: rgba(255,255,255,0.09); }
+
+    .row-open {
+      opacity: 0; width: 22px; height: 22px; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-3); transition: opacity 0.1s, background 0.1s;
+    }
+    tr:hover .row-open { opacity: 1; }
+    .row-open:hover { background: rgba(0,0,0,0.07); }
+
+    /* =============================================
+       EMPTY STATE
+       ============================================= */
+    .empty-state { padding: 80px 0 40px; text-align: center; }
+    .empty-state-emoji { font-size: 48px; margin-bottom: 14px; }
+    .empty-state-title { font-size: 19px; font-weight: 600; margin-bottom: 7px; }
+    .empty-state-desc { font-size: 14px; color: var(--text-3); line-height: 1.6; }
+
+    /* =============================================
+       AI PANEL (right slide)
+       ============================================= */
+    #ai-panel {
+      display: none; position: fixed; top: 0; right: 0;
+      width: 340px; height: 100vh;
+      background: var(--surface); border-left: 1px solid var(--border);
+      flex-direction: column; z-index: 200;
+      box-shadow: var(--shadow-lg);
+      animation: slideFromRight 0.18s cubic-bezier(0.16,1,0.3,1);
+    }
+    #ai-panel.open { display: flex; }
+    .aip-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .aip-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .aip-body { flex: 1; overflow-y: auto; padding: 14px; }
+    .aip-card {
+      background: var(--surface-hover); border-radius: 8px;
+      padding: 12px 14px; margin-bottom: 10px;
+    }
+    .aip-card-label { font-size: 11px; color: var(--text-3); margin-bottom: 7px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
+    .aip-card p { font-size: 14px; line-height: 1.65; color: var(--text-1); }
+    .aip-action {
+      display: block; width: 100%; text-align: left;
+      padding: 6px 8px; border-radius: 4px; border: none;
+      background: transparent; font-family: inherit; font-size: 13px;
+      color: var(--text-1); cursor: pointer; margin-bottom: 2px;
+      display: flex; align-items: center; gap: 7px;
+      transition: background 0.1s;
+    }
+    .aip-action:hover { background: rgba(0,0,0,0.05); }
+    .dark .aip-action:hover { background: rgba(255,255,255,0.06); }
+    .aip-input-row {
+      display: flex; gap: 8px; padding: 12px 14px;
+      border-top: 1px solid var(--border); flex-shrink: 0;
+      align-items: center;
+    }
+    .aip-input {
+      flex: 1; padding: 8px 12px; border-radius: 7px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text-1); font-family: inherit; font-size: 14px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .aip-input:focus { border-color: var(--accent); }
+    .aip-send {
+      width: 32px; height: 32px; border-radius: 7px;
+      background: var(--accent); color: #fff; border: none;
+      font-size: 15px; display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.1s;
+    }
+    .aip-send:hover { opacity: 0.85; }
+
+    /* =============================================
+       ANIMATIONS
+       ============================================= */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes slideFromRight {
+      from { transform: translateX(20px); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+
+    /* =============================================
+       MISC
+       ============================================= */
+    .sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ========== SIDEBAR ========== -->
+<nav id="sidebar">
+
+  <!-- Workspace switcher -->
+  <div class="ws-header">
+    <div class="ws-avatar">P</div>
+    <span class="ws-name">Pegn AI WorkOS</span>
+    <span class="ws-chevron">⌄</span>
+  </div>
+
+  <!-- Search -->
+  <div class="sb-search">
+    <span style="font-size:13px">🔍</span>
+    <span class="sb-search-label">搜尋</span>
+    <span class="sb-search-kbd">⌘K</span>
+  </div>
+
+  <!-- Quick action row -->
+  <div class="sb-actions">
+    <button class="sb-action">
+      <span>📥</span> 收件匣
+      <span class="badge">3</span>
+    </button>
+    <button class="sb-action" onclick="switchPage('db')">
+      <span>🤖</span> Agent
+    </button>
+  </div>
+
+  <div class="sb-divider"></div>
+
+  <div class="sb-scroll">
+
+    <!-- Favorites -->
+    <div class="sb-section-head">
+      <span>我的最愛</span>
+    </div>
+    <div class="nav-item active" onclick="switchPage('doc')">
+      <div class="nav-expand open">▶</div>
+      <span class="nav-icon">📝</span>
+      <span class="nav-title">產品設計規劃</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <!-- Private pages -->
+    <div class="sb-section-head">
+      <span>私人頁面</span>
+      <button class="sb-section-add">+</button>
+    </div>
+
+    <div class="nav-item active" onclick="switchPage('doc')">
+      <div class="nav-expand open">▶</div>
+      <span class="nav-icon">📝</span>
+      <span class="nav-title">產品設計規劃</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="nav-item d1" onclick="switchPage('q2')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">🎯</span>
+      <span class="nav-title">Q2 OKR</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="nav-item d1" onclick="switchPage('empty')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">💡</span>
+      <span class="nav-title">靈感筆記</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="nav-item" onclick="switchPage('doc')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">🔬</span>
+      <span class="nav-title">技術研究備忘</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="nav-item" onclick="switchPage('doc')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">📊</span>
+      <span class="nav-title">市場分析報告</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <!-- Team pages -->
+    <div class="sb-section-head">
+      <span>工作區共用</span>
+      <button class="sb-section-add">+</button>
+    </div>
+
+    <div class="nav-item" onclick="switchPage('db')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">🗃️</span>
+      <span class="nav-title">任務追蹤</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="nav-item" onclick="switchPage('db')">
+      <div class="nav-expand">▶</div>
+      <span class="nav-icon">🗂️</span>
+      <span class="nav-title">Sprint 看板</span>
+      <div class="nav-actions">
+        <div class="nav-action">+</div>
+        <div class="nav-action">···</div>
+      </div>
+    </div>
+
+    <div class="sb-divider"></div>
+
+    <div class="nav-item" style="opacity:0.6">
+      <div class="nav-expand" style="visibility:hidden">▶</div>
+      <span class="nav-icon">🗑️</span>
+      <span class="nav-title" style="font-size:13px;color:var(--text-3)">垃圾桶</span>
+    </div>
+
+    <div class="nav-item" style="opacity:0.6">
+      <div class="nav-expand" style="visibility:hidden">▶</div>
+      <span class="nav-icon">📋</span>
+      <span class="nav-title" style="font-size:13px;color:var(--text-3)">範本庫</span>
+    </div>
+
+  </div><!-- /sb-scroll -->
+
+  <!-- Footer -->
+  <div class="sb-footer">
+    <div class="user-avatar" title="林小明">林</div>
+    <span class="user-name">林小明</span>
+    <button class="icon-btn" id="dark-btn" onclick="toggleDark()" title="切換深色模式">🌙</button>
+    <button class="icon-btn" title="設定">⚙</button>
+  </div>
+
+</nav><!-- /sidebar -->
+
+
+<!-- ========== MAIN ========== -->
+<div id="main">
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="tb-left">
+      <!-- sidebar toggle -->
+      <button class="icon-btn" onclick="toggleSidebar()" title="切換側欄 (⌘/)">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+          <rect x="1" y="2.5" width="13" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="1" y="6.75" width="13" height="1.5" rx="0.75" fill="currentColor"/>
+          <rect x="1" y="11" width="13" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+      </button>
+
+      <!-- breadcrumb -->
+      <div class="breadcrumb">
+        <div class="bc-item" onclick="switchPage('doc')">
+          <span>🏠</span><span>Pegn WorkOS</span>
+        </div>
+        <span class="bc-sep">›</span>
+        <div class="bc-item current" id="bc-current">
+          <span>📝</span><span>產品設計規劃</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tb-right">
+      <!-- Presence -->
+      <div class="presence" style="margin-right:6px">
+        <div class="p-avatar" style="background:#2383e2" title="林小明（你）">林</div>
+        <div class="p-avatar" style="background:#7c3aed" title="陳美玲（在線）">陳</div>
+        <div class="p-avatar" style="background:#0a7a4c" title="王大衛（在線）">王</div>
+      </div>
+
+      <div class="online-dot" title="連線中"></div>
+      <div class="sep"></div>
+
+      <button class="tb-btn">💬 留言</button>
+      <button class="tb-btn">⭐</button>
+      <button class="tb-btn">分享</button>
+      <div class="sep"></div>
+      <button class="tb-btn ai-btn" onclick="toggleAI()">✦ AI</button>
+    </div>
+  </div><!-- /topbar -->
+
+  <!-- CONTENT -->
+  <div id="content">
+
+    <!-- ===== PAGE: Document with cover ===== -->
+    <div class="pview active" id="pv-doc">
+      <div class="cover g3">
+        <div class="cover-overlay">
+          <button class="cover-btn">更換封面</button>
+        </div>
+      </div>
+
+      <div class="pw">
+        <div class="pg-icon-row">
+          <span class="pg-icon">📝</span>
+        </div>
+
+        <div class="pg-meta-btns">
+          <button class="pg-meta-btn">🖼 更換封面</button>
+          <button class="pg-meta-btn">✦ 加入說明</button>
+        </div>
+
+        <div contenteditable="true" class="pg-title" data-ph="無標題頁面">產品設計規劃</div>
+
+        <div class="pg-body prose">
+
+          <h2>專案目標</h2>
+          <p>本季度目標是將 Pegn-AI 打造成可以媲美 Notion 的 AI 原生工作系統，結合<span class="wikilink">知識圖譜</span>與多智能體協作，讓知識工作者效率提升 3 倍。核心差異化點在於 AI 深度整合——不只是「加上 AI 的 Notion」，而是「以 AI 為核心的工作 OS」。</p>
+
+          <div class="callout info">
+            <span class="callout-icon">💡</span>
+            <div>本文件包含機密設計決策，請勿在工作區外分享。所有設計規格以本頁面為準，更新後自動同步至 <span class="wikilink">設計系統</span>。</div>
+          </div>
+
+          <h2>功能清單</h2>
+
+          <div class="todo">
+            <div class="todo-box done" onclick="toggleTodo(this)">✓</div>
+            <span class="todo-text done">設計系統 Design Tokens（色彩、字型、間距、陰影）</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box done" onclick="toggleTodo(this)">✓</div>
+            <span class="todo-text done">Sidebar 無限嵌套頁面樹 + Drag & Drop</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box done" onclick="toggleTodo(this)">✓</div>
+            <span class="todo-text done">WebSocket 即時在線人數 Presence 顯示</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box done" onclick="toggleTodo(this)">✓</div>
+            <span class="todo-text done">Wiki-links [[Page]] 跨文件連結 + 反向連結面板</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box done" onclick="toggleTodo(this)">✓</div>
+            <span class="todo-text done">Formula / Relation / Rollup 資料庫屬性</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box" onclick="toggleTodo(this)"></div>
+            <span class="todo-text">內容最大寬度置中（720–900px）+ 閱讀排版優化</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box" onclick="toggleTodo(this)"></div>
+            <span class="todo-text">全站暗色模式（含 CSS variables 切換）</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box" onclick="toggleTodo(this)"></div>
+            <span class="todo-text">Database View Tab 底線式設計重構</span>
+          </div>
+          <div class="todo">
+            <div class="todo-box" onclick="toggleTodo(this)"></div>
+            <span class="todo-text">頁面轉場 Fade 動畫（0.12s ease-out）</span>
+          </div>
+
+          <h2>技術架構</h2>
+          <p>後端採用 Node.js + Express，資料庫使用 PostgreSQL 15+（含 pgvector 向量搜尋）。前端為 React + Vite + Tailwind CSS + Framer Motion。即時協作透過 WebSocket（ws 套件）實現，LLM 透過 <code>LLMProvider</code> 抽象層整合多種模型後端。</p>
+
+          <h3>LLM 抽象層範例</h3>
+          <pre><code>interface LLMProvider {
+  name: string;
+  generate(prompt: string, input: string): Promise&lt;string&gt;;
+}
+
+class GeminiLLMProvider implements LLMProvider {
+  name = 'gemini-1.5-pro';
+  async generate(prompt: string, input: string) {
+    // 呼叫 Google Generative AI SDK
+    const result = await model.generateContent([prompt, input]);
+    return result.response.text();
+  }
+}</code></pre>
+
+          <div class="callout warn">
+            <span class="callout-icon">⚠️</span>
+            <div><strong>注意</strong>：pgvector extension 需要 PostgreSQL 15+，並需執行 <code>CREATE EXTENSION vector;</code>。部署前請確認版本兼容性。</div>
+          </div>
+
+          <h2>設計原則</h2>
+          <blockquote>「少即是多——每一個視覺元素都應有其存在的理由。最好的設計是讓用戶忘記它的存在，只感受到順暢。」</blockquote>
+
+          <ul>
+            <li>內容優先：UI 退到背景，讓文字與思想佔據舞台</li>
+            <li>進階揭示：控制項只在需要時出現（hover/focus）</li>
+            <li>一致的動感：所有動畫使用相同的 spring easing</li>
+            <li>無障礙設計：確保鍵盤可操作，色彩對比達 WCAG AA</li>
+          </ul>
+
+          <div class="callout tip">
+            <span class="callout-icon">✅</span>
+            <div>本頁面本身就是 UI 原型的示範——你現在看到的排版、間距、元件樣式，即是最終實作的目標效果。</div>
+          </div>
+
+        </div><!-- /prose -->
+      </div><!-- /pw -->
+    </div><!-- /pv-doc -->
+
+    <!-- ===== PAGE: Q2 OKR ===== -->
+    <div class="pview" id="pv-q2">
+      <div class="cover g2"></div>
+      <div class="pw">
+        <div class="pg-icon-row"><span class="pg-icon">🎯</span></div>
+        <div class="pg-meta-btns">
+          <button class="pg-meta-btn">🖼 更換封面</button>
+        </div>
+        <div contenteditable="true" class="pg-title" data-ph="無標題頁面">Q2 OKR</div>
+        <div class="pg-body prose">
+          <h2>Objective 1 — 提升用戶留存率</h2>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR1：DAU/MAU 比率提升至 40%</span></div>
+          <div class="todo"><div class="todo-box done" onclick="toggleTodo(this)">✓</div><span class="todo-text done">KR2：新用戶 7 日留存率 > 60%</span></div>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR3：NPS 分數 > 45</span></div>
+          <h2>Objective 2 — AI 功能深度整合</h2>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR1：每日 AI 使用次數 > 5,000 次</span></div>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR2：Agent 平均任務完成率 > 85%</span></div>
+          <div class="todo"><div class="todo-box done" onclick="toggleTodo(this)">✓</div><span class="todo-text done">KR3：Presence 即時協作上線</span></div>
+          <h2>Objective 3 — 效能與穩定性</h2>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR1：P99 API 回應 < 200ms</span></div>
+          <div class="todo"><div class="todo-box" onclick="toggleTodo(this)"></div><span class="todo-text">KR2：核心功能測試覆蓋率 > 80%</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: Empty ===== -->
+    <div class="pview" id="pv-empty">
+      <div class="pw" style="padding-top:80px">
+        <div class="pg-meta-btns" style="opacity:1">
+          <button class="pg-meta-btn">😊 加入圖示</button>
+          <button class="pg-meta-btn">🖼 加入封面</button>
+          <button class="pg-meta-btn">✏️ 加入說明</button>
+        </div>
+        <div contenteditable="true" class="pg-title" data-ph="無標題頁面"></div>
+        <div class="pg-body">
+          <p style="color:var(--text-ph);font-size:16px;line-height:1.7;cursor:text">
+            輸入 '/' 來插入區塊，或直接開始撰寫...
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PAGE: Database ===== -->
+    <div class="pview" id="pv-db">
+      <div class="pw" style="padding-top:36px;padding-bottom:80px">
+
+        <div class="db-icon-title">
+          <span style="font-size:36px">🗃️</span>
+          <div class="db-title-text">任務追蹤</div>
+        </div>
+
+        <!-- View Tabs (bottom-border style) -->
+        <div class="db-tabs">
+          <button class="db-tab active" onclick="switchTab(this)">
+            <span>☰</span> 表格
+          </button>
+          <button class="db-tab" onclick="switchTab(this)">
+            <span>📋</span> 看板
+          </button>
+          <button class="db-tab" onclick="switchTab(this)">
+            <span>📅</span> 日曆
+          </button>
+          <button class="db-tab" onclick="switchTab(this)">
+            <span>🖼</span> 圖片牆
+          </button>
+          <button class="db-tab" onclick="switchTab(this)">
+            <span>≡</span> 清單
+          </button>
+          <button class="db-tab-new">+ 新增視圖</button>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="db-toolbar">
+          <button class="db-tool">🔍 篩選</button>
+          <button class="db-tool">↕ 排序</button>
+          <button class="db-tool">👁 屬性</button>
+          <button class="db-tool">⋯ 更多</button>
+          <button class="db-new">+ 新增</button>
+        </div>
+
+        <!-- Table -->
+        <table class="db-table">
+          <thead>
+            <tr>
+              <th style="width:32px"></th>
+              <th>名稱</th>
+              <th>狀態</th>
+              <th>負責人</th>
+              <th>截止日期</th>
+              <th>標籤</th>
+              <th style="width:32px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>設計系統建立</strong></td>
+              <td><span class="chip done">✓ 已完成</span></td>
+              <td style="font-size:13px;color:var(--text-2)">林小明</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-02-28</td>
+              <td><span class="chip blue">設計</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>WebSocket Presence 整合</strong></td>
+              <td><span class="chip done">✓ 已完成</span></td>
+              <td style="font-size:13px;color:var(--text-2)">王大衛</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-03-02</td>
+              <td><span class="chip blue">後端</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>暗色模式實作</strong></td>
+              <td><span class="chip prog">⏳ 進行中</span></td>
+              <td style="font-size:13px;color:var(--text-2)">陳美玲</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-03-08</td>
+              <td><span class="chip blue">前端</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>內容寬度置中優化</strong></td>
+              <td><span class="chip todo">待處理</span></td>
+              <td style="font-size:13px;color:var(--text-2)">林小明</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-03-10</td>
+              <td><span class="chip blue">前端</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>Database View Tab 重設計</strong></td>
+              <td><span class="chip todo">待處理</span></td>
+              <td style="font-size:13px;color:var(--text-2)">陳美玲</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-03-12</td>
+              <td><span class="chip blue">設計</span> <span class="chip purple">UI</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox"></td>
+              <td><strong>頁面轉場動畫</strong></td>
+              <td><span class="chip todo">待處理</span></td>
+              <td style="font-size:13px;color:var(--text-2)">王大衛</td>
+              <td style="font-size:13px;color:var(--text-2)">2026-03-15</td>
+              <td><span class="chip blue">動畫</span></td>
+              <td><div class="row-open">↗</div></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="db-add-row">
+          <span>＋</span> 新增任務
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+</div><!-- /main -->
+
+<!-- ========== AI PANEL ========== -->
+<div id="ai-panel">
+  <div class="aip-head">
+    <div class="aip-title">
+      <span>✦</span> Pegn AI
+    </div>
+    <button class="icon-btn" onclick="toggleAI()">✕</button>
+  </div>
+
+  <div class="aip-body">
+
+    <div class="aip-card">
+      <div class="aip-card-label">AI 頁面摘要</div>
+      <p>這份文件規劃了 Pegn-AI 的產品路線圖，涵蓋設計系統建立、AI 整合層架構，以及 9 項功能待辦。目前完成率約 55%，暗色模式與 UI 優化為下一個優先項目。</p>
+    </div>
+
+    <div class="aip-card">
+      <div class="aip-card-label">快速操作</div>
+      <button class="aip-action"><span>📄</span> 摘要此頁面</button>
+      <button class="aip-action"><span>🔍</span> 從知識庫搜尋</button>
+      <button class="aip-action"><span>✏️</span> 改善文字表達</button>
+      <button class="aip-action"><span>🤖</span> 啟動 Agent 任務</button>
+      <button class="aip-action"><span>🌐</span> 翻譯此頁面</button>
+    </div>
+
+  </div>
+
+  <div class="aip-input-row">
+    <input class="aip-input" placeholder="問 AI 任何問題...">
+    <button class="aip-send">↑</button>
+  </div>
+</div>
+
+<script>
+  /* ---- Navigation ---- */
+  const pageMap = {
+    doc:   { viewId: 'pv-doc',   crumb: '📝 產品設計規劃' },
+    q2:    { viewId: 'pv-q2',    crumb: '🎯 Q2 OKR' },
+    empty: { viewId: 'pv-empty', crumb: '💡 靈感筆記' },
+    db:    { viewId: 'pv-db',    crumb: '🗃️ 任務追蹤' },
+  };
+
+  function switchPage(key) {
+    document.querySelectorAll('.pview').forEach(v => v.classList.remove('active'));
+    document.getElementById(pageMap[key].viewId).classList.add('active');
+
+    // breadcrumb
+    const bc = document.getElementById('bc-current');
+    bc.innerHTML = `<span>${pageMap[key].crumb}</span>`;
+
+    // scroll to top
+    document.getElementById('content').scrollTop = 0;
+
+    // update sidebar active (simple: set all inactive first)
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  }
+
+  /* ---- Sidebar toggle ---- */
+  function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+  }
+
+  /* ---- Dark mode ---- */
+  function toggleDark() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    document.getElementById('dark-btn').textContent = isDark ? '☀️' : '🌙';
+    document.body.style.colorScheme = isDark ? 'dark' : 'light';
+    localStorage.setItem('pegn-theme', isDark ? 'dark' : 'light');
+  }
+
+  // Restore preference
+  if (localStorage.getItem('pegn-theme') === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.body.style.colorScheme = 'dark';
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('dark-btn').textContent = '☀️';
+    });
+  }
+
+  /* ---- AI panel ---- */
+  function toggleAI() {
+    document.getElementById('ai-panel').classList.toggle('open');
+  }
+
+  /* ---- Todo toggle ---- */
+  function toggleTodo(box) {
+    const isDone = box.classList.toggle('done');
+    box.textContent = isDone ? '✓' : '';
+    const label = box.nextElementSibling;
+    if (label) label.classList.toggle('done', isDone);
+  }
+
+  /* ---- DB tab switch ---- */
+  function switchTab(btn) {
+    btn.closest('.db-tabs').querySelectorAll('.db-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  /* ---- Keyboard shortcuts ---- */
+  document.addEventListener('keydown', e => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key === '/') { e.preventDefault(); toggleSidebar(); }
+  });
+</script>
+</body>
+</html>

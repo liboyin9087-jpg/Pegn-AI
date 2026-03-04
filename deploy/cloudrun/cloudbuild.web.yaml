@@ -1,0 +1,38 @@
+steps:
+  # ── CI gate: run server + web unit tests before building images ──────────
+  - name: 'node:22'
+    id: 'test-server'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cd apps/server
+        npm ci --prefer-offline
+        npm run test -- --run
+  - name: 'node:22'
+    id: 'test-web'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cd apps/web
+        npm ci --prefer-offline
+        npm run test -- --run
+  # ── Build web Docker image ───────────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    waitFor: ['test-server', 'test-web']
+    args:
+      - build
+      - -f
+      - apps/web/Dockerfile
+      - --build-arg
+      - VITE_API_URL=${_VITE_API_URL}
+      - --build-arg
+      - VITE_SYNC_URL=${_VITE_SYNC_URL}
+      - --build-arg
+      - VITE_WS_URL=${_VITE_WS_URL}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:${_TAG}
+      - apps/web
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:${_TAG}
