@@ -5,3 +5,5 @@ dist
 *.log
 apps/**/dist
 apps/**/.env
+gcp-key.json
+gcp-key*.json
