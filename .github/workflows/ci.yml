@@ -86,6 +86,8 @@ jobs:
           context: ./apps/web
           push: false
           tags: pegn-web:ci
+          build-args: |
+            VITE_API_URL=
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -141,6 +143,8 @@ jobs:
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/web:${{ github.sha }}
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/web:latest
+          build-args: |
+            VITE_API_URL=
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

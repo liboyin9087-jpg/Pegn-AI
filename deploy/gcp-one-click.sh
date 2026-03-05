@@ -134,6 +134,36 @@ gcloud services enable \
 success "GCP APIs 啟用完成"
 
 # ════════════════════════════════════════════════════════════════════════════
+# 1.5  GCP 預算告警 (Budget Alert)
+# ════════════════════════════════════════════════════════════════════════════
+step "設定 GCP 預算告警"
+
+BUDGET_AMOUNT="${BUDGET_AMOUNT:-31}"
+echo -e "  預設預算: ${BOLD}\$${BUDGET_AMOUNT} USD/月${NC} (≈ 1000 TWD)"
+read -rp "  按 Enter 使用此金額，或輸入其他金額 (USD): " INPUT_BUDGET
+BUDGET_AMOUNT="${INPUT_BUDGET:-$BUDGET_AMOUNT}"
+
+gcloud services enable billingbudgets.googleapis.com --project="$PROJECT_ID" --quiet 2>/dev/null || true
+
+BILLING_ACCOUNT=$(gcloud billing projects describe "$PROJECT_ID" \
+  --format='value(billingAccountName)' 2>/dev/null | sed 's|billingAccounts/||')
+
+if [[ -n "$BILLING_ACCOUNT" ]]; then
+  gcloud billing budgets create \
+    --billing-account="$BILLING_ACCOUNT" \
+    --display-name="Pegn-AI Monthly Budget" \
+    --budget-amount="${BUDGET_AMOUNT}USD" \
+    --threshold-rule=percent=0.5 \
+    --threshold-rule=percent=0.8 \
+    --threshold-rule=percent=1.0 \
+    --filter-projects="projects/$PROJECT_ID" \
+    2>/dev/null && success "預算告警已建立: \$${BUDGET_AMOUNT}/月 (50%/80%/100% 告警)" \
+    || warn "預算可能已存在或權限不足，請至 GCP Console 手動確認"
+else
+  warn "無法取得 Billing Account，跳過預算設定（請至 GCP Console → Billing → Budgets 手動設定）"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
 # 2. Artifact Registry
 # ════════════════════════════════════════════════════════════════════════════
 step "建立 Artifact Registry Docker 倉庫"
@@ -203,12 +233,26 @@ gcloud builds submit apps/server \
 
 success "API 映像建構完成"
 
-# Web image (build needs the full context for env)
+# Web image — 使用 inline Cloud Build 以傳入 --build-arg VITE_API_URL=''
+# 空值讓前端使用相對路徑，由 nginx 反向代理到 API_UPSTREAM
 info "建構 Web 映像: $WEB_IMAGE"
 gcloud builds submit apps/web \
-  --tag="$WEB_IMAGE" \
+  --config=/dev/stdin \
+  --substitutions="_IMAGE=${WEB_IMAGE},_VITE_API_URL=" \
   --project="$PROJECT_ID" \
-  --quiet
+  --quiet <<'CLOUDBUILD'
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_IMAGE}
+      - --build-arg
+      - VITE_API_URL=${_VITE_API_URL}
+      - .
+images:
+  - ${_IMAGE}
+CLOUDBUILD
 
 success "Web 映像建構完成"
 
@@ -230,7 +274,7 @@ gcloud run deploy "$API_SERVICE" \
   --memory=512Mi \
   --concurrency=80 \
   --timeout=300 \
-  --set-env-vars="NODE_ENV=production,PORT=4000,RATE_LIMIT_DISABLED=true,QUOTA_DISABLED=true,CORS_ALLOW_ALL=true,OTEL_SERVICE_NAME=pegn-ai-api" \
+  --set-env-vars="NODE_ENV=production,PORT=4000,CORS_ALLOW_ALL=true,OTEL_SERVICE_NAME=pegn-ai-api" \
   --set-secrets="DATABASE_URL=DATABASE_URL:latest,JWT_SECRET=JWT_SECRET:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,REDIS_URL=REDIS_URL:latest" \
   --project="$PROJECT_ID" \
   --quiet
@@ -279,7 +323,7 @@ step "更新 API CORS 白名單"
 gcloud run services update "$API_SERVICE" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
-  --set-env-vars="NODE_ENV=production,PORT=4000,RATE_LIMIT_DISABLED=true,QUOTA_DISABLED=true,CORS_ALLOW_ALL=true,CORS_ORIGIN=${WEB_URL},OTEL_SERVICE_NAME=pegn-ai-api" \
+  --set-env-vars="NODE_ENV=production,PORT=4000,CORS_ORIGIN=${WEB_URL},OTEL_SERVICE_NAME=pegn-ai-api" \
   --quiet
 
 success "CORS 已加入: $WEB_URL"
@@ -313,10 +357,11 @@ echo -e "  查看 API 日誌:  gcloud run services logs tail $API_SERVICE --regi
 echo -e "  查看 Web 日誌:  gcloud run services logs tail $WEB_SERVICE --region=$REGION --project=$PROJECT_ID"
 echo -e "  更新部署:       bash deploy/gcp-one-click.sh"
 echo ""
-echo -e "${BOLD}API 設定 (無限制模式):${NC}"
-echo -e "  RATE_LIMIT_DISABLED=true    # Rate limit 已停用"
-echo -e "  QUOTA_DISABLED=true         # Quota 限制已停用"
-echo -e "  CORS_ALLOW_ALL=true         # CORS 全開放"
+echo -e "${BOLD}預算控制:${NC}"
+echo -e "  App Quota:    ${GREEN}已啟用${NC} (Free: 100K tokens/月, 200 calls/天, 20 runs/天)"
+echo -e "  GCP Budget:   ${GREEN}\$${BUDGET_AMOUNT} USD/月${NC} (50%/80%/100% Email 告警)"
+echo -e "  Rate Limit:   ${GREEN}已啟用${NC} (300/min general, 60/min AI)"
+echo -e "  升級方案:     POST /api/v1/billing/plan { plan: 'pro' | 'team' }"
 
 # 儲存設定到本地
 cat > "$SCRIPT_DIR/.deploy-config" << EOF

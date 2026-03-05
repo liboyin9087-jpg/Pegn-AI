@@ -14,7 +14,7 @@ import {
 
 export { getQueueSLAMetrics, type QueueSLAMetrics };
 
-const BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:4000') + '/api/v1';
+const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api/v1';
 const OFFLINE_ROLLOUT_USER_KEY = 'pegn_offline_rollout_user_id';
 
 function parseBooleanFlag(rawValue: unknown, defaultValue: boolean): boolean {
@@ -221,7 +221,7 @@ export const reportOfflineQueueMetrics = (payload: OfflineQueueObservabilityPayl
   });
 
 // ── OAuth ─────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
 export function oauthLogin(provider: 'google' | 'github') {
   window.location.href = `${API_BASE}/api/v1/auth/${provider}`;
@@ -658,7 +658,7 @@ export const getWorkspaceAuditLogs = (workspaceId: string, params?: { action?: s
 // ── SSE helpers ──────────────────────────────────────────────
 export function sseStream(path: string, onData: (d: any) => void, onDone: () => void) {
   const token = getToken();
-  const url = `${import.meta.env.VITE_API_URL ?? 'http://localhost:4000'}${path}${token ? `?token=${token}` : ''}`;
+  const url = `${import.meta.env.VITE_API_URL ?? ''}${path}${token ? `?token=${token}` : ''}`;
   const es = new EventSource(url);
   es.onmessage = (e) => { try { onData(JSON.parse(e.data)); } catch { } };
   es.addEventListener('done', () => { onDone(); es.close(); });

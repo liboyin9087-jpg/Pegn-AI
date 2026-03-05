@@ -28,13 +28,6 @@ spec:
               value: "4000"
             - name: OTEL_SERVICE_NAME
               value: pegn-ai-api
-            # 無限制 API 模式
-            - name: RATE_LIMIT_DISABLED
-              value: "true"
-            - name: QUOTA_DISABLED
-              value: "true"
-            - name: CORS_ALLOW_ALL
-              value: "true"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

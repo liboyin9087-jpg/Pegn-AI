@@ -58,6 +58,8 @@ steps:
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:$SHORT_SHA'
       - -t
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:latest'
+      - --build-arg
+      - VITE_API_URL=
       - ./apps/web
     waitFor: ['quality-gate-web']
 
