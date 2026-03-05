@@ -52,6 +52,8 @@ import { automationsRouter } from './routes/automations.js';
 import { startScheduler } from './services/automation.js';
 import { registerScimRoutes } from './routes/scim.js';
 import { registerFeedbackRoutes } from './routes/feedback.js';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './swagger.js';
 
 const appRole = (process.env.APP_ROLE ?? 'all').toLowerCase();
 const runApi = appRole === 'all' || appRole === 'api';
@@ -94,6 +96,10 @@ app.use('/api/v1', generalLimiter);
 
 // Add observability middleware
 app.use(requestTracker);
+
+// API documentation (Swagger UI)
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
 
 // Register routes
 registerHealthRoutes(app);

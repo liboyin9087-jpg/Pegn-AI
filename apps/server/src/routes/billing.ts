@@ -67,6 +67,33 @@ export function registerBillingRoutes(app: Express): void {
     }
   });
 
+  /**
+   * @openapi
+   * /api/v1/billing/usage:
+   *   get:
+   *     tags:
+   *       - Billing
+   *     summary: 查詢工作區用量統計（需 workspace:admin 權限）
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: workspace_id
+   *         required: true
+   *         schema: { type: string, format: uuid }
+   *       - in: query
+   *         name: period
+   *         description: 月份格式 YYYY-MM（預設當月）
+   *         schema: { type: string, example: '2026-03' }
+   *     responses:
+   *       '200':
+   *         description: 用量統計（ai_tokens、ai_calls、agent_runs 等）
+   *       '400':
+   *         description: 缺少 workspace_id
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   */
   // Get workspace usage & quota status
   app.get('/api/v1/billing/usage', authMiddleware, checkPermission('workspace:admin'), async (req: Request, res: Response) => {
     const workspaceId = getWorkspaceIdFromRequest(req);
@@ -80,6 +107,34 @@ export function registerBillingRoutes(app: Express): void {
     }
   });
 
+  /**
+   * @openapi
+   * /api/v1/billing/quota:
+   *   get:
+   *     tags:
+   *       - Billing
+   *     summary: 查詢特定資源的配額狀態
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: workspace_id
+   *         required: true
+   *         schema: { type: string, format: uuid }
+   *       - in: query
+   *         name: resource
+   *         required: true
+   *         description: 要查詢的資源類型
+   *         schema: { type: string, enum: [ai_tokens, ai_calls, agent_runs] }
+   *     responses:
+   *       '200':
+   *         description: 配額狀態（limit、used、remaining、exceeded）
+   *       '400':
+   *         description: 缺少參數或無效的 resource 類型
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   */
   // Check quota for a specific resource (used by client before heavy operations)
   app.get('/api/v1/billing/quota', authMiddleware, async (req: Request, res: Response) => {
     const workspaceId = getWorkspaceIdFromRequest(req);

@@ -105,6 +105,37 @@ function registerRunStreamRoutes(app: Express, path: string) {
 }
 
 export function registerAgentRoutes(app: Express): void {
+  /**
+   * @openapi
+   * /api/v1/agents/supervisor:
+   *   post:
+   *     tags:
+   *       - Agent
+   *     summary: 啟動 Supervisor Agent 任務（支援多 Worker 並行）
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [query, workspace_id]
+   *             properties:
+   *               query: { type: string, description: '任務描述', example: '分析最新市場趨勢並生成報告' }
+   *               workspace_id: { type: string, format: uuid }
+   *               mode: { type: string, enum: [auto, hybrid, graph], default: auto }
+   *     responses:
+   *       '200':
+   *         description: Agent 執行結果串流（Server-Sent Events）
+   *       '429':
+   *         description: 用量超出配額限制
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   *       '503':
+   *         description: 功能未啟用
+   */
   // Start Supervisor run.
   app.post('/api/v1/agents/supervisor', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
     if (!isFeatureEnabled('SUPERVISOR_V1')) {

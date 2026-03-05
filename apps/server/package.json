@@ -23,6 +23,7 @@
     "@opentelemetry/sdk-metrics": "^2.5.1",
     "@opentelemetry/sdk-node": "^0.212.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
+    "@types/swagger-ui-express": "^4.1.8",
     "@types/ws": "^8.18.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
@@ -39,6 +40,8 @@
     "pdf-parse": "^2.4.5",
     "pg": "^8.11.5",
     "stripe": "^20.4.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "ws": "^8.19.0",
     "yjs": "^13.6.18"
   },

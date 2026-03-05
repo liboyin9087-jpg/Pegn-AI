@@ -7,6 +7,53 @@ const VALID_EVENTS: WebhookEvent[] = ['document.created', 'document.updated', 'b
 
 export function registerWebhookRoutes(app: Express): void {
 
+  /**
+   * @openapi
+   * /api/v1/webhooks:
+   *   post:
+   *     tags:
+   *       - Webhooks
+   *     summary: 註冊 Webhook（需 workspace:admin 權限）
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [url, events, workspace_id]
+   *             properties:
+   *               url: { type: string, format: uri, example: 'https://hooks.example.com/notify' }
+   *               events:
+   *                 type: array
+   *                 items: { type: string }
+   *                 example: [document.created, agent.completed]
+   *               workspace_id: { type: string, format: uuid }
+   *               secret: { type: string, description: 'HMAC 驗證 secret（可選）' }
+   *     responses:
+   *       '200':
+   *         description: Webhook 建立成功，回傳 id
+   *       '400':
+   *         description: 參數錯誤或無效的 event 類型
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   *   get:
+   *     tags:
+   *       - Webhooks
+   *     summary: 列出工作區的所有 Webhooks（需 workspace:admin 權限）
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: workspace_id
+   *         required: true
+   *         schema: { type: string, format: uuid }
+   *     responses:
+   *       '200':
+   *         description: Webhook 清單
+   */
   // Register a webhook (requires workspace:admin)
   app.post('/api/v1/webhooks', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     const { url, events, secret } = req.body;

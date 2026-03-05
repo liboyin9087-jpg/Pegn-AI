@@ -5,6 +5,41 @@ import { signToken, authMiddleware, type AuthRequest } from '../middleware/auth.
 
 export function registerAuthRoutes(app: Express): void {
 
+  /**
+   * @openapi
+   * /api/v1/auth/register:
+   *   post:
+   *     tags:
+   *       - Auth
+   *     summary: 註冊新帳號
+   *     security: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password, name]
+   *             properties:
+   *               email: { type: string, format: email, example: user@example.com }
+   *               password: { type: string, minLength: 6 }
+   *               name: { type: string, example: 林小明 }
+   *     responses:
+   *       '201':
+   *         description: 註冊成功，回傳 JWT token
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 token: { type: string }
+   *                 user: { type: object, properties: { id: { type: string }, email: { type: string }, name: { type: string } } }
+   *       '409':
+   *         description: Email 已被使用
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   */
   // POST /api/v1/auth/register
   app.post('/api/v1/auth/register', async (req: Request, res: Response) => {
     const { email, password, name } = req.body;
@@ -42,6 +77,40 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
+  /**
+   * @openapi
+   * /api/v1/auth/login:
+   *   post:
+   *     tags:
+   *       - Auth
+   *     summary: 使用者登入，取得 JWT token
+   *     security: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [email, password]
+   *             properties:
+   *               email: { type: string, format: email, example: user@example.com }
+   *               password: { type: string }
+   *     responses:
+   *       '200':
+   *         description: 登入成功，回傳 JWT token
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 token: { type: string }
+   *                 user: { type: object, properties: { id: { type: string }, email: { type: string }, name: { type: string } } }
+   *       '401':
+   *         description: 帳號或密碼錯誤
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   */
   // POST /api/v1/auth/login
   app.post('/api/v1/auth/login', async (req: Request, res: Response) => {
     const { email, password } = req.body;

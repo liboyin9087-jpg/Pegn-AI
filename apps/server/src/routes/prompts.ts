@@ -110,6 +110,32 @@ export function registerPromptRoutes(app: Express): void {
     }
   });
 
+  /**
+   * @openapi
+   * /api/v1/prompts:
+   *   get:
+   *     tags:
+   *       - Prompts
+   *     summary: 列出所有 Prompts
+   *     parameters:
+   *       - in: query
+   *         name: category
+   *         schema: { type: string }
+   *         description: 依分類篩選
+   *       - in: query
+   *         name: tags
+   *         schema: { type: string }
+   *         description: 逗號分隔的標籤列表
+   *     responses:
+   *       '200':
+   *         description: Prompt 清單
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 prompts: { type: array, items: { type: object } }
+   */
   // List prompts
   app.get('/api/v1/prompts', async (req: Request, res: Response) => {
     try {
@@ -178,6 +204,38 @@ export function registerPromptRoutes(app: Express): void {
     }
   });
 
+  /**
+   * @openapi
+   * /api/v1/prompts/{id}/test:
+   *   post:
+   *     tags:
+   *       - Prompts
+   *     summary: 使用 LLM 執行 Prompt 測試
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema: { type: string, format: uuid }
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required: [testInputs]
+   *             properties:
+   *               testInputs:
+   *                 type: array
+   *                 items: { type: object, properties: { input: { type: string } } }
+   *     responses:
+   *       '200':
+   *         description: 測試結果陣列（含 LLM 輸出與 passed 狀態）
+   *       '400':
+   *         description: testInputs 格式錯誤
+   *         content:
+   *           application/json:
+   *             schema: { $ref: '#/components/schemas/Error' }
+   */
   // Run prompt tests
   app.post('/api/v1/prompts/:id/test', async (req: Request, res: Response) => {
     const startTime = Date.now();
