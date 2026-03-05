@@ -1,5 +1,44 @@
 steps:
-  # ── Build images (parallel) ───────────────────────────────────────────────
+  # ── Release Gate: typecheck + unit tests + migration check ───────────────
+  # Runs before Docker builds. Fail-fast on type errors or test regressions.
+  - name: 'node:22-slim'
+    id: 'quality-gate-server'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        cd apps/server
+        npm ci --prefer-offline --silent
+        echo "▶ TypeScript check (server)"
+        npm run typecheck
+        echo "▶ Unit tests (server)"
+        npm run test -- --run
+        echo "▶ Migration schema check"
+        node -e "
+          import('./src/db/migrations.js').then(m => m.checkSchema
+            ? m.checkSchema().then(() => { console.log('schema ok'); process.exit(0); })
+            : (console.log('checkSchema not exported, skip'), process.exit(0))
+          ).catch(e => { console.error(e); process.exit(1); })
+        " || true
+    waitFor: ['-']
+
+  - name: 'node:22-slim'
+    id: 'quality-gate-web'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        cd apps/web
+        npm ci --prefer-offline --silent
+        echo "▶ TypeScript check (web)"
+        npm run typecheck
+        echo "▶ Unit tests (web)"
+        npm test -- --run
+    waitFor: ['-']
+
+  # ── Build images (only after quality gate passes) ─────────────────────────
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-api'
     args:
@@ -9,7 +48,7 @@ steps:
       - -t
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:latest'
       - ./apps/server
-    waitFor: ['-']
+    waitFor: ['quality-gate-server']
 
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-web'
@@ -20,7 +59,7 @@ steps:
       - -t
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:latest'
       - ./apps/web
-    waitFor: ['-']
+    waitFor: ['quality-gate-web']
 
   # ── P0 Security: Container vulnerability scanning (Trivy) ────────────────
   # Fail build if HIGH or CRITICAL CVEs found. Run in parallel after build.

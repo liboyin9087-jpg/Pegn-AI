@@ -6,6 +6,36 @@ const pdfParse = require('pdf-parse');
 import { DocumentModel } from '../models/document.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 
+// ── Content safety scanner ──────────────────────────────────────────────────
+// Detects common injection patterns and suspicious binary-in-text content.
+// Not a substitute for AV scanning; provides a first line of defence for
+// text extracted from uploaded documents before it is stored in the DB.
+const MALICIOUS_PATTERNS: RegExp[] = [
+  /<script[\s>]/i,                     // inline script tags
+  /javascript\s*:/i,                   // JS protocol in links
+  /on\w+=\s*["'`]?\s*[a-z]/i,        // DOM event handlers (onerror=, onclick=…)
+  /data:\s*text\/html/i,              // data-URI HTML smuggling
+  /\x00|\ufffd/,                       // null bytes / replacement chars (binary debris)
+  /(?:--|;|\||&&)\s*(?:DROP|DELETE|INSERT|UPDATE|EXEC|UNION)\b/i, // SQLi patterns
+  /\$\{.*\}/,                          // template-literal injection
+  /eval\s*\(/i,                        // eval()
+  /__import__\s*\(/i,                  // Python injection
+];
+
+const MAX_TEXT_LENGTH = 500_000; // 500 k chars — ~350 pages
+
+function scanContentSafety(text: string): { safe: boolean; reason?: string } {
+  if (text.length > MAX_TEXT_LENGTH) {
+    return { safe: false, reason: `Extracted text exceeds maximum allowed length (${MAX_TEXT_LENGTH} chars)` };
+  }
+  for (const pattern of MALICIOUS_PATTERNS) {
+    if (pattern.test(text)) {
+      return { safe: false, reason: 'Potentially unsafe content detected in file' };
+    }
+  }
+  return { safe: true };
+}
+
 // 記憶體暫存，不寫磁碟
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -57,6 +87,13 @@ export function registerUploadRoutes(app: Express): void {
 
         if (!text.trim()) {
           res.status(422).json({ error: 'Could not extract text from file' });
+          return;
+        }
+
+        // Content safety scan before storing
+        const safety = scanContentSafety(text);
+        if (!safety.safe) {
+          res.status(422).json({ error: safety.reason ?? 'File rejected by content safety check' });
           return;
         }
 

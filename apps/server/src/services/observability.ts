@@ -61,6 +61,43 @@ export function getLatencyStats(): Record<string, LatencyStats> {
   };
 }
 
+// ── Agent run success/failure ring buffer (SLO tracking) ──────────────────
+const AGENT_OUTCOME_BUFFER_SIZE = 200;
+
+class AgentOutcomeBuffer {
+  private buf = new Uint8Array(AGENT_OUTCOME_BUFFER_SIZE);
+  private ptr = 0;
+  private count = 0;
+
+  record(success: boolean): void {
+    this.buf[this.ptr % AGENT_OUTCOME_BUFFER_SIZE] = success ? 1 : 0;
+    this.ptr++;
+    this.count = Math.min(this.count + 1, AGENT_OUTCOME_BUFFER_SIZE);
+  }
+
+  successRate(): number {
+    if (this.count === 0) return 1; // default 100% when no data yet
+    let hits = 0;
+    for (let i = 0; i < this.count; i++) hits += this.buf[i];
+    return Math.round((hits / this.count) * 1000) / 1000;
+  }
+
+  sampleCount(): number { return this.count; }
+}
+
+export const agentOutcomeBuffer = new AgentOutcomeBuffer();
+
+export function recordAgentOutcome(success: boolean): void {
+  agentOutcomeBuffer.record(success);
+}
+
+export function getAgentSuccessStats(): { success_rate: number; sample_count: number } {
+  return {
+    success_rate: agentOutcomeBuffer.successRate(),
+    sample_count: agentOutcomeBuffer.sampleCount(),
+  };
+}
+
 export interface MetricData {
   name: string;
   value: number;

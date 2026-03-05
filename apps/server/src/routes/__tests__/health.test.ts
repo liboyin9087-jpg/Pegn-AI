@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockValidateSnapshotRecovery = vi.fn();
 const mockGetLatencyStats = vi.fn();
+const mockGetAgentSuccessStats = vi.fn();
 
 vi.mock('../../services/snapshot.js', () => ({
   snapshotService: {
@@ -18,6 +19,7 @@ vi.mock('../../services/snapshot.js', () => ({
 
 vi.mock('../../services/observability.js', () => ({
   getLatencyStats: mockGetLatencyStats,
+  getAgentSuccessStats: mockGetAgentSuccessStats,
   latencyBuffer: { push: vi.fn() },
   observability: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), recordRequestDuration: vi.fn(), recordDatabaseQuery: vi.fn() },
   requestTracker: (_req: any, _res: any, next: any) => next(),
@@ -40,6 +42,7 @@ describe('health routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetLatencyStats.mockReturnValue(defaultStats);
+    mockGetAgentSuccessStats.mockReturnValue({ success_rate: 1, sample_count: 0 });
   });
 
   describe('GET /health', () => {

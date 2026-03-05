@@ -10,7 +10,7 @@ import type { Express, Request, Response } from 'express';
 const LAST_UPDATED = '2026-03-05';
 const COMPANY_NAME = 'Pegn-AI';
 const CONTACT_EMAIL = 'legal@pegn.ai'; // TODO: replace with actual contact
-const DPA_AVAILABLE = false; // Set to true when DPA doc is ready
+const DPA_AVAILABLE = true;
 
 export function registerLegalRoutes(app: Express): void {
   /**
@@ -107,9 +107,49 @@ export function registerLegalRoutes(app: Express): void {
       return;
     }
     res.json({
+      document: 'data_processing_agreement',
       available: true,
+      company: COMPANY_NAME,
+      last_updated: LAST_UPDATED,
       contact: CONTACT_EMAIL,
       full_document_url: 'https://pegn.ai/dpa',
+      summary: {
+        scope: `This DPA governs how ${COMPANY_NAME} processes personal data on behalf of the Customer (data controller) when providing the ${COMPANY_NAME} platform.`,
+        roles: {
+          data_controller: 'The Customer (organization subscribing to the service)',
+          data_processor: COMPANY_NAME,
+          sub_processors: [
+            { name: 'Google Cloud Platform', purpose: 'Hosting & infrastructure', region: 'asia-east1 (Taiwan)' },
+            { name: 'Google Gemini API', purpose: 'AI text generation', data: 'Prompt content submitted by users' },
+            { name: 'OpenAI API', purpose: 'AI text generation (fallback)', data: 'Prompt content submitted by users' },
+            { name: 'Anthropic Claude API', purpose: 'AI text generation (fallback)', data: 'Prompt content submitted by users' },
+            { name: 'Stripe', purpose: 'Payment processing', data: 'Billing contact information only' },
+            { name: 'Google Analytics 4', purpose: 'Usage analytics (if consented)', data: 'Anonymized event data' },
+          ],
+        },
+        data_subject_rights: [
+          'Access (GET /api/v1/auth/me)',
+          'Erasure / Right to be forgotten (DELETE /api/v1/auth/account)',
+          'Portability (GET /api/v1/collections/:id/export)',
+          'Rectification (PATCH /api/v1/auth/profile)',
+          'Restriction of processing (contact legal@pegn.ai)',
+        ],
+        security_measures: [
+          'Data encrypted at rest (AES-256 via Google Cloud)',
+          'Data encrypted in transit (TLS 1.2+)',
+          'Access controls: JWT authentication + RBAC',
+          'Audit logging for sensitive operations',
+          'Container vulnerability scanning (Trivy)',
+          'Dependency vulnerability scanning (npm audit)',
+        ],
+        retention_and_deletion: {
+          account_data: 'Deleted within 30 days of account deletion request',
+          server_logs: '90 days',
+          backups: 'Purged within 60 days of deletion',
+        },
+        breach_notification: 'Controller will be notified within 72 hours of discovering a personal data breach (GDPR Art. 33).',
+        governing_law: 'Taiwan Personal Data Protection Act (PDPA) and, where applicable, GDPR.',
+      },
     });
   });
 }

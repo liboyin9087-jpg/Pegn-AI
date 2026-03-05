@@ -19,6 +19,7 @@ import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
 import { ToastProvider, useToast } from './components/Toast';
 import CookieConsent from './components/CookieConsent';
+import LegalPage from './components/LegalPage';
 import BillingDashboard from './components/BillingDashboard';
 import { SearchModal } from './components/SearchModal';
 import { VersionHistory } from './components/VersionHistory';
@@ -71,6 +72,7 @@ export default function App() {
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [showLegal, setShowLegal] = useState<'privacy' | 'terms' | 'dpa' | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -912,7 +914,8 @@ export default function App() {
         </div>
       </main>
     </div>
-    <CookieConsent />
+    <CookieConsent privacyPolicyUrl="#" onPrivacyClick={() => setShowLegal('privacy')} />
+    {showLegal && <LegalPage initialTab={showLegal} onClose={() => setShowLegal(null)} />}
     </ToastProvider>
   );
 }

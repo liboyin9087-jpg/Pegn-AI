@@ -7,9 +7,10 @@ type ConsentState = 'accepted' | 'declined' | null;
 
 interface CookieConsentProps {
   privacyPolicyUrl?: string;
+  onPrivacyClick?: () => void;
 }
 
-export default function CookieConsent({ privacyPolicyUrl = '/privacy' }: CookieConsentProps) {
+export default function CookieConsent({ privacyPolicyUrl = '/privacy', onPrivacyClick }: CookieConsentProps) {
   const [consent, setConsent] = useState<ConsentState>(null);
   const [visible, setVisible] = useState(false);
 
@@ -59,10 +60,11 @@ export default function CookieConsent({ privacyPolicyUrl = '/privacy' }: CookieC
             我們使用必要的 Cookie 維護登入狀態，以及選擇性分析 Cookie（GA4）改善產品體驗。
             您可以選擇接受或拒絕可選 Cookie。詳情請見{' '}
             <a
-              href={privacyPolicyUrl}
-              target="_blank"
+              href={onPrivacyClick ? '#' : privacyPolicyUrl}
+              target={onPrivacyClick ? undefined : '_blank'}
               rel="noopener noreferrer"
               className="underline text-neutral-700 dark:text-neutral-300 hover:text-neutral-900"
+              onClick={onPrivacyClick ? (e) => { e.preventDefault(); onPrivacyClick(); } : undefined}
             >
               隱私政策
             </a>

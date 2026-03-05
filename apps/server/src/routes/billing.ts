@@ -174,6 +174,13 @@ export function registerBillingRoutes(app: Express): void {
       const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
       let event: Stripe.Event;
 
+      // In production, STRIPE_WEBHOOK_SECRET is mandatory — reject unsigned requests.
+      if (process.env.NODE_ENV === 'production' && !webhookSecret) {
+        console.error('[stripe-webhook] STRIPE_WEBHOOK_SECRET not set in production');
+        res.status(503).send('Webhook not configured');
+        return;
+      }
+
       try {
         if (webhookSecret && req.headers['stripe-signature']) {
           const rawBody = (req as any).rawBody ?? JSON.stringify(req.body);
@@ -182,9 +189,13 @@ export function registerBillingRoutes(app: Express): void {
             req.headers['stripe-signature'] as string,
             webhookSecret
           );
-        } else {
-          // Development: trust the body directly (no signature check)
+        } else if (process.env.NODE_ENV !== 'production') {
+          // Development only: trust the body directly (no signature check)
           event = req.body as Stripe.Event;
+        } else {
+          // Production without signature header — reject
+          res.status(400).send('Missing Stripe-Signature header');
+          return;
         }
       } catch (err) {
         res.status(400).send(`Webhook signature verification failed`);

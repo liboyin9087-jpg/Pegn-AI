@@ -67,5 +67,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/vitest.setup.ts'],
+    css: false,  // Skip CSS/PostCSS processing in tests (native binding not available in CI)
   }
 });

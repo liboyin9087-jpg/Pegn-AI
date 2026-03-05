@@ -89,4 +89,63 @@ export function registerAuthRoutes(app: Express): void {
       res.status(500).json({ error: 'Failed to get user' });
     }
   });
+
+  /**
+   * DELETE /api/v1/auth/account
+   * GDPR right-to-erasure: permanently deletes the authenticated user's account
+   * and all associated personal data.
+   * Body: { password } — required to confirm identity before deletion.
+   */
+  app.delete('/api/v1/auth/account', authMiddleware, async (req: AuthRequest, res: Response) => {
+    const { password } = req.body as { password?: string };
+    if (!password) {
+      res.status(400).json({ error: 'password is required to confirm account deletion' });
+      return;
+    }
+
+    try {
+      const p = pool;
+      if (!p) throw new Error('Database not initialized');
+
+      // Re-verify password before destructive operation
+      const result = await p.query(
+        'SELECT id, email, password_hash FROM users WHERE id = $1',
+        [req.userId]
+      );
+      const user = result.rows[0];
+      if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+      const passwordValid = await bcrypt.compare(password, user.password_hash);
+      if (!passwordValid) {
+        res.status(403).json({ error: 'Incorrect password' });
+        return;
+      }
+
+      // Cascade delete all user data in a transaction
+      await p.query('BEGIN');
+      try {
+        // Remove from workspace memberships
+        await p.query('DELETE FROM workspace_members WHERE user_id = $1', [req.userId]);
+        // Destroy active sessions
+        await p.query('DELETE FROM sessions WHERE user_id = $1', [req.userId]);
+        // Soft-delete documents created by this user (preserve workspace integrity)
+        await p.query(
+          `UPDATE documents SET deleted_at = now(), metadata = COALESCE(metadata,'{}') || '{"deleted_reason":"account_deleted"}'
+           WHERE created_by = $1 AND deleted_at IS NULL`,
+          [req.userId]
+        );
+        // Finally delete the user row itself
+        await p.query('DELETE FROM users WHERE id = $1', [req.userId]);
+        await p.query('COMMIT');
+      } catch (innerErr) {
+        await p.query('ROLLBACK');
+        throw innerErr;
+      }
+
+      res.status(204).end();
+    } catch (err) {
+      console.error('[auth] account deletion error', err);
+      res.status(500).json({ error: 'Account deletion failed' });
+    }
+  });
 }
