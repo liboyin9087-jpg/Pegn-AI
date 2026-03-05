@@ -24,7 +24,7 @@ interface Options {
 }
 
 const WS_URL = import.meta.env.VITE_WS_URL
-  ?? (import.meta.env.VITE_API_URL ?? 'http://localhost:4000')
+  ?? (import.meta.env.VITE_API_URL ?? '')
       .replace(/^http/, 'ws');
 
 const PING_INTERVAL_MS = 25_000;

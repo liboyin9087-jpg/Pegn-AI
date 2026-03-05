@@ -484,7 +484,7 @@ function InlineAIBlock({ visible, x, y, initialPrompt, workspaceId, onInsert, on
     esRef.current?.close();
 
     const token = localStorage.getItem('auth_token');
-    const base = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+    const base = import.meta.env.VITE_API_URL ?? '';
     const url = `${base}/api/v1/ai/stream?prompt=${encodeURIComponent(prompt)}${token ? `&token=${token}` : ''}`;
     const es = new EventSource(url);
     esRef.current = es;

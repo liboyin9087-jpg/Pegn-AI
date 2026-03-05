@@ -84,7 +84,7 @@ export default function GraphRAGChat({
 
     try {
       const token = getToken();
-      const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+      const apiBase = import.meta.env.VITE_API_URL ?? '';
       const res = await fetch(`${apiBase}/api/v1/knowledge/stream`, {
         method: 'POST',
         headers: {

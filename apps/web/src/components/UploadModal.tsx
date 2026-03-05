@@ -69,7 +69,7 @@ export default function UploadModal({ workspaceId, onClose, onUploaded }: Props)
         form.append('title', entry.file.name.replace(/\.[^.]+$/, ''));
 
         const res = await fetch(
-          (import.meta.env.VITE_API_URL ?? 'http://localhost:4000') + '/api/v1/upload/file',
+          (import.meta.env.VITE_API_URL ?? '') + '/api/v1/upload/file',
           { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }
         );
         const data = await res.json();
