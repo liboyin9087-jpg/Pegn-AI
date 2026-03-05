@@ -116,7 +116,7 @@ steps:
       - --concurrency=80
       - --port=4000
       - --set-secrets=DATABASE_URL=DATABASE_URL_PROD:latest,JWT_SECRET=JWT_SECRET_PROD:latest,GEMINI_API_KEY=GEMINI_API_KEY_PROD:latest,OPENAI_API_KEY=OPENAI_API_KEY_PROD:latest
-      - --set-env-vars=NODE_ENV=production,PORT=4000,OTEL_SERVICE_NAME=pegn-ai-server
+      - --set-env-vars=NODE_ENV=production,OTEL_SERVICE_NAME=pegn-ai-server
     waitFor: ['push-api']
 
   # ── Capture API URL ───────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ steps:
           --port=8080 \
           --timeout=30 \
           --concurrency=100 \
-          --set-env-vars="PORT=8080,NODE_ENV=production,API_UPSTREAM=$$API_URL"
+          --set-env-vars="NODE_ENV=production,API_UPSTREAM=$$API_URL"
     waitFor: ['push-web', 'get-api-url']
 
 substitutions:
