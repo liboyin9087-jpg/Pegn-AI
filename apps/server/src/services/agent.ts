@@ -5,6 +5,7 @@ import { pool } from '../db/client.js';
 import { observability } from './observability.js';
 import { graphRAGQuery } from './graphrag.js';
 import { searchService } from './search.js';
+import { sanitizeUserInput } from './inputSanitizer.js';
 
 // ── Agent LLM abstraction (Gemini / OpenAI / Claude) ────────────────────────
 
@@ -382,14 +383,22 @@ function fallbackTaskPlan(query: string, template: AgentTemplate): string[] {
 }
 
 async function plannerWorker(query: string, template: AgentTemplate): Promise<{ tasks: string[]; intent: string }> {
+  // P0 Security: sanitize user query before sending to LLM
+  const sanitized = sanitizeUserInput(query);
+  if (sanitized.blocked) {
+    observability.warn('plannerWorker: input blocked by sanitizer', { reason: sanitized.reason });
+    return { tasks: fallbackTaskPlan(query, template), intent: query };
+  }
+  const safeQuery = sanitized.safe;
+
   const model = await getModel();
   if (!model) {
-    return { tasks: fallbackTaskPlan(query, template), intent: query };
+    return { tasks: fallbackTaskPlan(safeQuery, template), intent: safeQuery };
   }
 
   const prompt = `你是任務規劃器。請把使用者需求拆成 2-4 個可執行子任務，回傳 JSON：{"intent":"...","tasks":["...",...]}
 Template: ${TEMPLATE_REGISTRY[template]?.plannerHint ?? template}
-User query: ${query}`;
+User query: ${safeQuery}`;
 
   try {
     const rawText = await model.generate(prompt);
@@ -400,15 +409,15 @@ User query: ${query}`;
       : [];
 
     if (tasks.length === 0) {
-      return { tasks: fallbackTaskPlan(query, template), intent: query };
+      return { tasks: fallbackTaskPlan(safeQuery, template), intent: safeQuery };
     }
 
     return {
       tasks,
-      intent: parsed.intent ? String(parsed.intent) : query,
+      intent: parsed.intent ? String(parsed.intent) : safeQuery,
     };
   } catch {
-    return { tasks: fallbackTaskPlan(query, template), intent: query };
+    return { tasks: fallbackTaskPlan(safeQuery, template), intent: safeQuery };
   }
 }
 

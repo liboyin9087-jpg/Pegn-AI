@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
+import { sanitizeUserInput, sanitizePromptTemplate } from './inputSanitizer.js';
 
 export interface Prompt {
   id: string;
@@ -510,13 +511,21 @@ export class PromptOpsService {
   }
 
   private async runLLMCall(prompt: string, input: string): Promise<string> {
+    // P0 Security: sanitize both template and user input before LLM call
+    const sanitizedInput = sanitizeUserInput(input);
+    if (sanitizedInput.blocked) {
+      observability.warn('PromptOps LLM call blocked by sanitizer', { reason: sanitizedInput.reason });
+      throw new Error(`Input blocked: ${sanitizedInput.reason}`);
+    }
+    const sanitizedPrompt = sanitizePromptTemplate(prompt);
+
     observability.debug('PromptOps LLM call', {
       provider: this.llmProvider.name,
-      prompt: prompt.substring(0, 100),
-      input: input.substring(0, 100)
+      prompt: sanitizedPrompt.safe.substring(0, 100),
+      input: sanitizedInput.safe.substring(0, 100)
     });
 
-    return this.llmProvider.generate(prompt, input);
+    return this.llmProvider.generate(sanitizedPrompt.safe, sanitizedInput.safe);
   }
 
   private async calculateScore(input: string, output: string): Promise<number> {

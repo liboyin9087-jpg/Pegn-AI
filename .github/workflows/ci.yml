@@ -23,6 +23,15 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      # ── Security: npm audit ────────────────────────────────────
+      - name: Security audit (server)
+        working-directory: ./apps/server
+        run: npm audit --audit-level=high
+
+      - name: Security audit (web)
+        working-directory: ./apps/web
+        run: npm audit --audit-level=high
+
       # ── Typecheck ──────────────────────────────────────────────────
       - name: Typecheck (server)
         working-directory: ./apps/server

@@ -18,6 +18,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
 import { ToastProvider, useToast } from './components/Toast';
+import CookieConsent from './components/CookieConsent';
 import { SearchModal } from './components/SearchModal';
 import { VersionHistory } from './components/VersionHistory';
 import { AutomationPanel } from './components/AutomationPanel';
@@ -878,6 +879,7 @@ export default function App() {
         </div>
       </main>
     </div>
+    <CookieConsent />
     </ToastProvider>
   );
 }

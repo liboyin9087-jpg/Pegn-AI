@@ -48,7 +48,25 @@
 
   /* Fonts */
   --font-family-sans: "Plus Jakarta Sans", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-family-serif: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-family-dm: "DM Sans", ui-sans-serif, system-ui, sans-serif;
   --font-family-mono: "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* ── Luminary Gold Palette (Auth + Accent) ──────────────── */
+  --gold:             #d4a853;
+  --gold-soft:        rgba(212,168,83,0.12);
+  --gold-glow:        rgba(212,168,83,0.25);
+  --gold-border:      rgba(212,168,83,0.5);
+
+  /* Auth surface */
+  --bg-auth:          #07080f;
+  --surface-auth:     #0e1018;
+  --border-auth:      rgba(255,255,255,0.07);
+  --border-auth-hover:rgba(255,255,255,0.14);
+  --input-auth-bg:    rgba(255,255,255,0.035);
+  --text-auth-primary:   #f0efe8;
+  --text-auth-secondary: #8a8a9a;
+  --text-auth-muted:     #4a4a5a;
 
   /* Shadows — layered, natural */
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.03);
@@ -97,6 +115,24 @@
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+@keyframes auth-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes ping-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(1.25); }
+}
+
+/* ── Auth noise overlay ── */
+.auth-noise::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  opacity: 0.025;
+  pointer-events: none;
+  z-index: 9999;
 }
 
 /* ─────────────────────────────────────────────────────────

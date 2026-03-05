@@ -3,6 +3,8 @@ import { WorkspaceModel } from '../models/workspace.js';
 import { observability } from '../services/observability.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { checkPermission } from '../middleware/rbac.js';
+import { auditLog } from '../services/audit.js';
+import { queryAuditLogs } from '../services/audit.js';
 
 export function registerWorkspaceRoutes(app: Express): void {
 
@@ -32,6 +34,7 @@ export function registerWorkspaceRoutes(app: Express): void {
       }
 
       observability.info('Workspace created', { workspaceId: workspace.id, duration: Date.now() - startTime });
+      await auditLog({ workspaceId: workspace.id, actorUserId: req.userId, action: 'workspace.created', resourceType: 'workspace', resourceId: workspace.id, newValue: { name }, req });
       res.status(201).json(workspace);
     } catch (error) {
       observability.error('Workspace creation failed', { error: String(error) });
@@ -86,10 +89,26 @@ export function registerWorkspaceRoutes(app: Express): void {
   // Delete workspace (admin only)
   app.delete('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     try {
+      await auditLog({ workspaceId: req.params.workspaceId, actorUserId: req.userId, action: 'workspace.deleted', resourceType: 'workspace', resourceId: req.params.workspaceId, req });
       await WorkspaceModel.delete(req.params.workspaceId);
       res.json({ message: 'Workspace deleted', workspaceId: req.params.workspaceId });
     } catch {
       res.status(500).json({ error: 'Failed to delete workspace' });
+    }
+  });
+
+  // Get audit logs for workspace (admin only)
+  app.get('/api/v1/workspaces/:workspaceId/audit-logs', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
+    try {
+      const { action, limit, before } = req.query as Record<string, string>;
+      const logs = await queryAuditLogs(req.params.workspaceId, {
+        action,
+        limit: limit ? parseInt(limit) : 100,
+        before,
+      });
+      res.json({ logs });
+    } catch {
+      res.status(500).json({ error: 'Failed to fetch audit logs' });
     }
   });
 }

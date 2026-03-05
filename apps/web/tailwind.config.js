@@ -42,10 +42,19 @@ export default {
         'agent-border-default': 'rgba(255, 255, 255, 0.10)',
         'agent-border-hover': 'rgba(255, 255, 255, 0.15)',
         'agent-border-focus': 'rgba(255, 255, 255, 0.20)',
+
+        // Luminary Gold tokens
+        gold:           '#d4a853',
+        'gold-soft':    'rgba(212,168,83,0.12)',
+        'gold-glow':    'rgba(212,168,83,0.25)',
+        'bg-auth':      '#07080f',
+        'surface-auth': '#0e1018',
       },
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'ui-sans-serif', '-apple-system', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', '"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        sans:    ['"Plus Jakarta Sans"', 'ui-sans-serif', '-apple-system', 'system-ui', 'sans-serif'],
+        serif:   ['"Playfair Display"', 'Georgia', 'serif'],
+        dm:      ['"DM Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono:    ['"JetBrains Mono"', '"SF Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       boxShadow: {
         'sm': '0 1px 2px rgba(0,0,0,0.04)',

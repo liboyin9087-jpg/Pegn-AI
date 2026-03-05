@@ -41,6 +41,7 @@ import { registerInviteRoutes } from './routes/invites.js';
 import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
 import { registerBillingRoutes } from './routes/billing.js';
+import { registerLegalRoutes } from './routes/legal.js';
 import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -115,6 +116,7 @@ registerCommentRoutes(app);
 registerInboxRoutes(app);
 registerOfflineObservabilityRoutes(app);
 registerBillingRoutes(app);
+registerLegalRoutes(app);
 app.use('/api/v1/trash',           trashRouter);
 app.use('/api/v1/favorites',       favoritesRouter);
 app.use('/api/v1/doc-versions',    versionsRouter);   // GET/POST /api/v1/doc-versions/:id/...

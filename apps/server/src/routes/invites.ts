@@ -5,6 +5,7 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { checkPermission } from '../middleware/rbac.js';
 import { observability } from '../services/observability.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
+import { auditLog } from '../services/audit.js';
 
 type InviteRole = 'admin' | 'editor' | 'viewer';
 
@@ -102,6 +103,16 @@ export function registerInviteRoutes(app: Express): void {
           email,
           role,
           invitedBy: req.userId
+        });
+
+        await auditLog({
+          workspaceId,
+          actorUserId: req.userId,
+          action: 'member.invited',
+          resourceType: 'workspace_member',
+          resourceId: invite.id,
+          newValue: { email, role },
+          req,
         });
 
         res.status(201).json({

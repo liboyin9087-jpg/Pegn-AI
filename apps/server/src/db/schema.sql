@@ -594,3 +594,26 @@ CREATE TRIGGER update_automations_updated_at BEFORE UPDATE ON automations FOR EA
 DROP TRIGGER IF EXISTS update_page_templates_updated_at ON page_templates;
 CREATE TRIGGER update_page_templates_updated_at BEFORE UPDATE ON page_templates FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE INDEX IF NOT EXISTS idx_documents_workspace_position ON documents(workspace_id, position);
+
+-- ============================================================
+-- P0 Security: Audit Logs
+-- Immutable append-only log for security-sensitive actions.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+    actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,           -- e.g. "member.role_changed", "member.invited", "member.removed", "workspace.deleted"
+    resource_type TEXT,             -- e.g. "workspace_member", "document", "collection"
+    resource_id TEXT,               -- UUID of affected resource
+    old_value JSONB,                -- Previous state (for updates)
+    new_value JSONB,                -- New state (for updates/creates)
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace ON audit_logs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC);
+-- Note: audit_logs intentionally has NO updated_at trigger — records are immutable.

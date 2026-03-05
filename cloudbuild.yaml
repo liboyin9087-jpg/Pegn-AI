@@ -22,16 +22,40 @@ steps:
       - ./apps/web
     waitFor: ['-']
 
-  # ── Push images ───────────────────────────────────────────────────────────
+  # ── P0 Security: Container vulnerability scanning (Trivy) ────────────────
+  # Fail build if HIGH or CRITICAL CVEs found. Run in parallel after build.
+  - name: 'aquasec/trivy:latest'
+    id: 'scan-api'
+    args:
+      - image
+      - '--exit-code=1'
+      - '--severity=HIGH,CRITICAL'
+      - '--no-progress'
+      - '--ignore-unfixed'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api:$SHORT_SHA'
+    waitFor: ['build-api']
+
+  - name: 'aquasec/trivy:latest'
+    id: 'scan-web'
+    args:
+      - image
+      - '--exit-code=1'
+      - '--severity=HIGH,CRITICAL'
+      - '--no-progress'
+      - '--ignore-unfixed'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web:$SHORT_SHA'
+    waitFor: ['build-web']
+
+  # ── Push images (only after scans pass) ──────────────────────────────────
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-api'
     args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/api']
-    waitFor: ['build-api']
+    waitFor: ['scan-api']
 
   - name: 'gcr.io/cloud-builders/docker'
     id: 'push-web'
     args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/web']
-    waitFor: ['build-web']
+    waitFor: ['scan-web']
 
   # ── Deploy API to Cloud Run ───────────────────────────────────────────────
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'

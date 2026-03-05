@@ -607,6 +607,32 @@ export const deleteAutomation = (id: string) =>
 export const listAutomationRuns = (id: string) =>
   api<{ runs: any[] }>(`/automations/${id}/runs`);
 
+// ── Billing & Quota ───────────────────────────────────────────
+export const getBillingPlans = () =>
+  api<{ plans: any[] }>('/billing/plans');
+export const getWorkspacePlan = (workspaceId: string) =>
+  api<any>(`/billing/plan?workspace_id=${workspaceId}`);
+export const getBillingUsage = (workspaceId: string) =>
+  api<any>(`/billing/usage?workspace_id=${workspaceId}`);
+export const getCostAlert = (workspaceId: string) =>
+  api<any>(`/billing/cost-alert?workspace_id=${workspaceId}`);
+export const startCheckout = (workspaceId: string, plan: string, successUrl: string, cancelUrl: string) =>
+  api<{ url: string; session_id: string }>('/billing/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ workspace_id: workspaceId, plan, success_url: successUrl, cancel_url: cancelUrl }),
+  });
+export const openBillingPortal = (workspaceId: string, customerId: string, returnUrl: string) =>
+  api<{ url: string }>('/billing/portal', {
+    method: 'POST',
+    body: JSON.stringify({ workspace_id: workspaceId, customer_id: customerId, return_url: returnUrl }),
+  });
+export const getWorkspaceAuditLogs = (workspaceId: string, params?: { action?: string; limit?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.action) qs.set('action', params.action);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  return api<{ logs: any[] }>(`/workspaces/${workspaceId}/audit-logs?${qs.toString()}`);
+};
+
 // ── SSE helpers ──────────────────────────────────────────────
 export function sseStream(path: string, onData: (d: any) => void, onDone: () => void) {
   const token = getToken();
