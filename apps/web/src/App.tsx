@@ -22,6 +22,7 @@ import CookieConsent from './components/CookieConsent';
 import LegalPage from './components/LegalPage';
 import BillingDashboard from './components/BillingDashboard';
 import { SearchModal } from './components/SearchModal';
+import FeedbackModal from './components/FeedbackModal';
 import { VersionHistory } from './components/VersionHistory';
 import { AutomationPanel } from './components/AutomationPanel';
 import {
@@ -72,6 +73,7 @@ export default function App() {
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [showLegal, setShowLegal] = useState<'privacy' | 'terms' | 'dpa' | null>(null);
 
   useEffect(() => {
@@ -678,6 +680,13 @@ export default function App() {
       {/* Keyboard Help Modal */}
       <KeyboardHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
 
+      {/* Feedback Modal */}
+      <FeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        workspaceId={workspace?.id}
+      />
+
       {/* AI Side Sheet */}
       <ErrorBoundary>
         <AiSheet
@@ -730,6 +739,7 @@ export default function App() {
                 onOpenTrash={() => setTrashOpen(true)}
                 onOpenAutomations={() => setAutomationsOpen(true)}
                 onOpenBilling={() => setBillingOpen(true)}
+            onOpenFeedback={() => setFeedbackOpen(true)}
                 onFavoriteDoc={handleToggleFavorite}
               />
             </ErrorBoundary>

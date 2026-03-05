@@ -50,6 +50,8 @@ import { favoritesRouter } from './routes/favorites.js';
 import { versionsRouter } from './routes/versions.js';
 import { automationsRouter } from './routes/automations.js';
 import { startScheduler } from './services/automation.js';
+import { registerScimRoutes } from './routes/scim.js';
+import { registerFeedbackRoutes } from './routes/feedback.js';
 
 const appRole = (process.env.APP_ROLE ?? 'all').toLowerCase();
 const runApi = appRole === 'all' || appRole === 'api';

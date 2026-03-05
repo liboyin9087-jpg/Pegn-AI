@@ -2,6 +2,7 @@ import type { Express, Request, Response } from 'express';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as GitHubStrategy } from 'passport-github2';
+import { Strategy as SamlStrategy, Profile as SamlProfile } from '@node-saml/passport-saml';
 import { pool } from '../db/client.js';
 import { signToken } from '../middleware/auth.js';
 
@@ -110,6 +111,42 @@ function setupPassport() {
     ));
   }
 
+  // ── SAML / Enterprise SSO ──
+  const SAML_ENTRY_POINT = process.env.SAML_ENTRY_POINT;
+  const SAML_CERT = process.env.SAML_CERT ?? '';
+  const SAML_ISSUER = process.env.SAML_ISSUER ?? 'pegn-ai';
+  if (SAML_ENTRY_POINT && SAML_CERT) {
+    passport.use('saml', new SamlStrategy(
+      {
+        entryPoint: SAML_ENTRY_POINT,
+        issuer: SAML_ISSUER,
+        cert: SAML_CERT,
+        callbackUrl: `${BASE_URL}/api/v1/auth/saml/callback`,
+        wantAssertionsSigned: false,
+      },
+      async (profile: SamlProfile, done: any) => {
+        try {
+          const email = (profile.email ?? profile.nameID ?? '').toLowerCase().trim();
+          const name = (profile.displayName ?? profile['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'] ?? email.split('@')[0]) as string;
+          if (!email) return done(new Error('SAML profile missing email'));
+          if (!pool) return done(new Error('DB not available'));
+          // Upsert user by email (SAML doesn't use OAuth provider table)
+          const res = await pool.query(
+            `INSERT INTO users (email, name, password_hash)
+             VALUES ($1, $2, NULL)
+             ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
+             RETURNING id, email, name`,
+            [email, name]
+          );
+          done(null, res.rows[0]);
+        } catch (err) {
+          done(err as Error);
+        }
+      },
+      async (_profile: SamlProfile, done: any) => done(null, _profile), // logout callback
+    ));
+  }
+
   passport.serializeUser((user: any, done) => done(null, user));
   passport.deserializeUser((user: any, done) => done(null, user));
 }
@@ -164,11 +201,35 @@ export function registerOAuthRoutes(app: Express): void {
     },
   );
 
+  // ── SAML routes ──
+  app.get('/api/v1/auth/saml',
+    (req, res, next) => {
+      if (!process.env.SAML_ENTRY_POINT || !process.env.SAML_CERT) {
+        res.status(501).json({ error: 'SAML SSO not configured' });
+        return;
+      }
+      passport.authenticate('saml', { session: false })(req, res, next);
+    },
+  );
+  app.post('/api/v1/auth/saml/callback',
+    (req, res, next) => {
+      if (!process.env.SAML_ENTRY_POINT || !process.env.SAML_CERT) {
+        res.status(501).json({ error: 'SAML SSO not configured' });
+        return;
+      }
+      passport.authenticate('saml', { session: false }, (err: any, user: any) => {
+        if (err || !user) return oauthError(res, err ?? new Error('SAML auth failed'));
+        redirectWithToken(res, user);
+      })(req, res, next);
+    },
+  );
+
   // ── Status check (are OAuth providers configured?) ──
   app.get('/api/v1/auth/oauth/status', (_req: Request, res: Response) => {
     res.json({
       google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
       github: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+      saml: !!(process.env.SAML_ENTRY_POINT && process.env.SAML_CERT),
     });
   });
 

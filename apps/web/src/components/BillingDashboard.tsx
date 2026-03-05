@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Zap, TrendingUp, AlertTriangle, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
-import { getBillingUsage, getCostAlert, getBillingPlans, startCheckout } from '../api/client';
+import { Zap, TrendingUp, AlertTriangle, ChevronRight, Loader2, RefreshCw, ChevronDown, ChevronUp, PackagePlus, Cpu } from 'lucide-react';
+import { getBillingUsage, getCostAlert, getBillingPlans, startCheckout, getUsageByModel, getAddonInfo, postAddonCheckout } from '../api/client';
 import { trackViewBilling, trackCheckoutStarted } from '../lib/analytics';
 
 interface BillingDashboardProps {
@@ -24,6 +24,20 @@ interface CostAlert {
   budget_usd: number;
   remaining_usd: number;
   period: string;
+}
+
+interface ModelUsageRow {
+  model_name: string;
+  tokens: number;
+  cost_usd: number;
+  calls: number;
+}
+
+interface AddonPackage {
+  id: string;
+  name: string;
+  tokens: number;
+  price_usd: number;
 }
 
 function ProgressBar({ pct, warning }: { pct: number; warning?: boolean }) {
@@ -66,19 +80,33 @@ export default function BillingDashboard({ workspaceId, onClose }: BillingDashbo
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [modelBreakdown, setModelBreakdown] = useState<ModelUsageRow[]>([]);
+  const [modelOpen, setModelOpen] = useState(true);
+  const [addonPackages, setAddonPackages] = useState<AddonPackage[]>([]);
+  const [addonSubs, setAddonSubs] = useState<any[]>([]);
+  const [addonOpen, setAddonOpen] = useState(false);
+  const [purchasingAddon, setPurchasingAddon] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [usageRes, alertRes, plansRes] = await Promise.allSettled([
+      const [usageRes, alertRes, plansRes, modelRes, addonRes] = await Promise.allSettled([
         getBillingUsage(workspaceId),
         getCostAlert(workspaceId),
         getBillingPlans(),
+        getUsageByModel(workspaceId),
+        getAddonInfo(workspaceId),
       ]);
       if (usageRes.status === 'fulfilled') setUsage(usageRes.value as UsageData);
       if (alertRes.status === 'fulfilled') setCostAlert(alertRes.value as CostAlert);
       if (plansRes.status === 'fulfilled') setPlans((plansRes.value as any).plans ?? []);
+      if (modelRes.status === 'fulfilled') setModelBreakdown((modelRes.value as any).breakdown ?? []);
+      if (addonRes.status === 'fulfilled') {
+        const r = addonRes.value as any;
+        setAddonPackages(r.packages ?? []);
+        setAddonSubs(r.subscriptions ?? []);
+      }
     } catch {
       setError('無法載入用量資料');
     } finally {
@@ -107,6 +135,24 @@ export default function BillingDashboard({ workspaceId, onClose }: BillingDashbo
       setError('無法啟動結帳流程，請稍後再試。');
     } finally {
       setUpgrading(null);
+    }
+  };
+
+  const handleAddonCheckout = async (pkgId: string) => {
+    setPurchasingAddon(pkgId);
+    try {
+      const origin = window.location.origin;
+      const res = await postAddonCheckout(
+        workspaceId,
+        pkgId,
+        `${origin}/?billing=addon-success&package=${pkgId}`,
+        `${origin}/?billing=addon-cancelled`
+      );
+      if (res.url) window.location.href = res.url;
+    } catch {
+      setError('無法啟動 Add-on 結帳流程，請稍後再試。');
+    } finally {
+      setPurchasingAddon(null);
     }
   };
 
@@ -195,6 +241,84 @@ export default function BillingDashboard({ workspaceId, onClose }: BillingDashbo
               pct={usage.agent_runs.pct * 100}
             />
           </div>
+
+          {/* By-Model Breakdown */}
+          {modelBreakdown.length > 0 && (
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setModelOpen(o => !o)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              >
+                <span className="flex items-center gap-1.5 text-xs font-medium text-neutral-500 uppercase tracking-wide">
+                  <Cpu size={12} /> 依模型分類
+                </span>
+                {modelOpen ? <ChevronUp size={13} className="text-neutral-400" /> : <ChevronDown size={13} className="text-neutral-400" />}
+              </button>
+              {modelOpen && (
+                <div className="px-4 pb-4 space-y-2">
+                  {modelBreakdown.map(row => (
+                    <div key={row.model_name} className="flex items-center justify-between text-xs">
+                      <span className="font-mono text-neutral-700 dark:text-neutral-300 truncate max-w-[180px]" title={row.model_name}>
+                        {row.model_name === 'unknown' ? '（未知模型）' : row.model_name}
+                      </span>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-neutral-500">
+                          {row.tokens >= 1000000 ? `${(row.tokens / 1000000).toFixed(1)}M` : row.tokens >= 1000 ? `${(row.tokens / 1000).toFixed(0)}k` : row.tokens} tokens
+                        </span>
+                        <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                          ${row.cost_usd.toFixed(4)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Add-on Token Packages */}
+          {addonPackages.length > 0 && (
+            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setAddonOpen(o => !o)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              >
+                <span className="flex items-center gap-1.5 text-xs font-medium text-neutral-500 uppercase tracking-wide">
+                  <PackagePlus size={12} /> 購買額外用量
+                </span>
+                {addonOpen ? <ChevronUp size={13} className="text-neutral-400" /> : <ChevronDown size={13} className="text-neutral-400" />}
+              </button>
+              {addonOpen && (
+                <div className="px-4 pb-4 space-y-2">
+                  {addonSubs.length > 0 && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-2">
+                      已啟用 Add-on：{addonSubs.reduce((s, r) => s + (r.tokens_bought ?? 0), 0).toLocaleString()} 額外 tokens
+                    </p>
+                  )}
+                  {addonPackages.map((pkg: AddonPackage) => (
+                    <div key={pkg.id} className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-neutral-800 dark:text-neutral-200">{pkg.name}</p>
+                        <p className="text-[11px] text-neutral-500">
+                          {(pkg.tokens / 1000000).toFixed(0)}M tokens — ${pkg.price_usd} USD
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleAddonCheckout(pkg.id)}
+                        disabled={purchasingAddon !== null}
+                        className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg
+                                   bg-violet-600 text-white hover:bg-violet-700 transition-colors
+                                   disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {purchasingAddon === pkg.id ? <Loader2 size={11} className="animate-spin" /> : null}
+                        購買
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Upgrade Plans (only if not on highest plan) */}
           {currentPlan !== 'team' && plans.length > 0 && (

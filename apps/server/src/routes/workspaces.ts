@@ -97,18 +97,86 @@ export function registerWorkspaceRoutes(app: Express): void {
     }
   });
 
-  // Get audit logs for workspace (admin only)
+  // Get audit logs for workspace (admin only) — supports ?format=json|csv download
   app.get('/api/v1/workspaces/:workspaceId/audit-logs', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
     try {
-      const { action, limit, before } = req.query as Record<string, string>;
+      const { action, limit, before, format } = req.query as Record<string, string>;
       const logs = await queryAuditLogs(req.params.workspaceId, {
         action,
-        limit: limit ? parseInt(limit) : 100,
+        limit: limit ? Math.min(parseInt(limit), 500) : 100,
         before,
       });
+
+      if (format === 'csv') {
+        const headers = ['id', 'action', 'actor_user_id', 'resource_type', 'resource_id', 'ip_address', 'created_at'];
+        const escape = (v: any) => {
+          const s = String(v ?? '');
+          return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const csv = [
+          headers.join(','),
+          ...logs.map(r => headers.map(h => escape(r[h])).join(',')),
+        ].join('\n');
+        const filename = `audit-logs-${req.params.workspaceId}-${new Date().toISOString().slice(0,10)}.csv`;
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(csv);
+        return;
+      }
+
+      if (format === 'json') {
+        const filename = `audit-logs-${req.params.workspaceId}-${new Date().toISOString().slice(0,10)}.json`;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.json({ workspace_id: req.params.workspaceId, exported_at: new Date().toISOString(), total: logs.length, logs });
+        return;
+      }
+
       res.json({ logs });
     } catch {
       res.status(500).json({ error: 'Failed to fetch audit logs' });
+    }
+  });
+
+  // Track onboarding progress
+  app.post('/api/v1/workspaces/:workspaceId/onboarding', authMiddleware, async (req: AuthRequest, res: Response) => {
+    const { step, completed } = req.body as { step?: number; completed?: boolean };
+    if (step === undefined || typeof step !== 'number') {
+      res.status(400).json({ error: 'step (number) required' });
+      return;
+    }
+    try {
+      const { pool } = await import('../db/client.js');
+      if (!pool) { res.status(503).json({ error: 'DB not available' }); return; }
+      const result = await pool.query(
+        `INSERT INTO onboarding_progress (workspace_id, user_id, last_step, completed_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (workspace_id, user_id)
+         DO UPDATE SET last_step = GREATEST(onboarding_progress.last_step, EXCLUDED.last_step),
+                       completed_at = COALESCE(onboarding_progress.completed_at, EXCLUDED.completed_at),
+                       updated_at = NOW()
+         RETURNING *`,
+        [req.params.workspaceId, req.userId, step, completed ? new Date() : null]
+      );
+      res.json(result.rows[0]);
+    } catch {
+      res.status(500).json({ error: 'Failed to update onboarding progress' });
+    }
+  });
+
+  // Get onboarding progress for workspace
+  app.get('/api/v1/workspaces/:workspaceId/onboarding', authMiddleware, async (req: AuthRequest, res: Response) => {
+    try {
+      const { pool } = await import('../db/client.js');
+      if (!pool) { res.json({ last_step: 0, completed: false }); return; }
+      const result = await pool.query(
+        'SELECT * FROM onboarding_progress WHERE workspace_id = $1 AND user_id = $2',
+        [req.params.workspaceId, req.userId]
+      );
+      if (!result.rows[0]) { res.json({ last_step: 0, completed: false }); return; }
+      res.json({ last_step: result.rows[0].last_step, completed: !!result.rows[0].completed_at });
+    } catch {
+      res.status(500).json({ error: 'Failed to get onboarding progress' });
     }
   });
 }

@@ -111,24 +111,90 @@ class ClaudeAgentLLM implements AgentLLM {
   }
 }
 
+// ── Fallback Chain LLM (P1: 模型自動降級) ─────────────────────────────────
+class FallbackAgentLLM implements AgentLLM {
+  readonly provider: string;
+  private chain: AgentLLM[];
+
+  constructor(chain: AgentLLM[]) {
+    this.chain = chain;
+    this.provider = chain.map(c => c.provider).join('+');
+  }
+
+  async generate(prompt: string): Promise<string> {
+    let lastErr: unknown;
+    for (const llm of this.chain) {
+      try {
+        const result = await llm.generate(prompt);
+        if (this.chain[0] !== llm) {
+          observability.warn('Agent LLM fallback used', { fallbackProvider: llm.provider });
+        }
+        return result;
+      } catch (err) {
+        lastErr = err;
+        observability.warn('Agent LLM provider failed, trying next', { provider: llm.provider, error: String(err) });
+      }
+    }
+    throw new Error(`All LLM providers failed. Last error: ${String(lastErr)}`);
+  }
+
+  async stream(prompt: string, onToken: (token: string) => void): Promise<string> {
+    let lastErr: unknown;
+    for (const llm of this.chain) {
+      try {
+        const result = await llm.stream(prompt, onToken);
+        if (this.chain[0] !== llm) {
+          observability.warn('Agent LLM fallback used for stream', { fallbackProvider: llm.provider });
+        }
+        return result;
+      } catch (err) {
+        lastErr = err;
+        observability.warn('Agent LLM stream provider failed, trying next', { provider: llm.provider, error: String(err) });
+      }
+    }
+    throw new Error(`All LLM stream providers failed. Last error: ${String(lastErr)}`);
+  }
+}
+
 function createAgentLLM(): AgentLLM | null {
   const preferred = String(process.env.AGENT_LLM_PROVIDER ?? 'auto').toLowerCase();
 
-  if ((preferred === 'gemini' || preferred === 'auto') && process.env.GEMINI_API_KEY) {
-    observability.info('Agent LLM provider', { provider: 'gemini' });
-    return new GeminiAgentLLM();
-  }
-  if ((preferred === 'openai' || preferred === 'auto') && process.env.OPENAI_API_KEY) {
-    observability.info('Agent LLM provider', { provider: 'openai' });
-    return new OpenAIAgentLLM();
-  }
-  if ((preferred === 'claude' || preferred === 'auto') && process.env.ANTHROPIC_API_KEY) {
-    observability.info('Agent LLM provider', { provider: 'claude' });
-    return new ClaudeAgentLLM();
+  // Build available LLMs in configured priority order
+  const providerMap: Record<string, () => AgentLLM | null> = {
+    gemini: () => process.env.GEMINI_API_KEY ? new GeminiAgentLLM() : null,
+    openai: () => process.env.OPENAI_API_KEY ? new OpenAIAgentLLM() : null,
+    claude:  () => process.env.ANTHROPIC_API_KEY ? new ClaudeAgentLLM() : null,
+  };
+
+  if (preferred !== 'auto') {
+    // Explicit provider requested
+    const factory = providerMap[preferred];
+    const llm = factory?.();
+    if (llm) {
+      observability.info('Agent LLM provider', { provider: preferred });
+      return llm;
+    }
+    observability.warn('Agent LLM: requested provider not configured, falling back to auto', { preferred });
   }
 
-  observability.warn('Agent LLM: no provider configured, running in fallback mode');
-  return null;
+  // Auto mode: build chain from AGENT_FALLBACK_CHAIN env (default: gemini,openai,claude)
+  const chain = (process.env.AGENT_FALLBACK_CHAIN ?? 'gemini,openai,claude')
+    .split(',')
+    .map(p => p.trim().toLowerCase())
+    .filter(p => p in providerMap)
+    .map(p => providerMap[p]())
+    .filter((llm): llm is AgentLLM => llm !== null);
+
+  if (chain.length === 0) {
+    observability.warn('Agent LLM: no provider configured, running in fallback mode');
+    return null;
+  }
+  if (chain.length === 1) {
+    observability.info('Agent LLM provider', { provider: chain[0].provider });
+    return chain[0];
+  }
+  observability.info('Agent LLM fallback chain', { chain: chain.map(c => c.provider) });
+  return new FallbackAgentLLM(chain);
 }
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';

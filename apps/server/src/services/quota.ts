@@ -28,6 +28,13 @@ const PLAN_QUOTA_PRESETS: Record<BillingPlan, PlanQuotaPreset> = {
   },
 };
 
+// P1: Add-on token packages (purchasable one-time bundles)
+export const ADDON_TOKEN_PACKAGES = [
+  { id: 'tokens_500k',  label: '50萬 Tokens',  tokens: 500_000,  price_usd: 0.99 },
+  { id: 'tokens_2m',    label: '200萬 Tokens', tokens: 2_000_000, price_usd: 2.99 },
+  { id: 'tokens_10m',   label: '1000萬 Tokens', tokens: 10_000_000, price_usd: 9.99 },
+] as const;
+
 function normalizePlan(plan: string | undefined): BillingPlan | null {
   if (!plan) return null;
   const normalized = plan.toLowerCase();
@@ -238,20 +245,37 @@ export async function recordUsage(
   workspaceId: string,
   userId: string | undefined,
   type: ResourceType,
-  amount: number
+  amount: number,
+  modelName?: string,  // P1: 記錄消耗的 model 名稱，用於多維度成本分析
 ): Promise<void> {
   const p = pool;
   if (!p || amount <= 0) return;
 
   const period = periodForResource(type);
   try {
-    await p.query(
-      `INSERT INTO usage_records (workspace_id, user_id, resource_type, period, amount)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (workspace_id, resource_type, period)
-       DO UPDATE SET amount = usage_records.amount + EXCLUDED.amount, updated_at = NOW()`,
-      [workspaceId, userId ?? null, type, period, amount]
-    );
+    // Store model_name in metadata for by-model cost breakdown (A9)
+    // Note: ON CONFLICT upserts aggregate amount but keeps metadata from first insert.
+    // For per-model granularity we insert a separate row per model.
+    if (modelName && type === 'ai_tokens') {
+      await p.query(
+        `INSERT INTO usage_records (workspace_id, user_id, resource_type, period, amount, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (workspace_id, resource_type, period)
+         DO UPDATE SET amount = usage_records.amount + EXCLUDED.amount,
+                       metadata = COALESCE(usage_records.metadata, '{}')
+                         || jsonb_build_object('model_name', $7),
+                       updated_at = NOW()`,
+        [workspaceId, userId ?? null, type, period, amount, JSON.stringify({ model_name: modelName }), modelName]
+      );
+    } else {
+      await p.query(
+        `INSERT INTO usage_records (workspace_id, user_id, resource_type, period, amount)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (workspace_id, resource_type, period)
+         DO UPDATE SET amount = usage_records.amount + EXCLUDED.amount, updated_at = NOW()`,
+        [workspaceId, userId ?? null, type, period, amount]
+      );
+    }
   } catch (error) {
     observability.warn('Failed to record usage', { workspaceId, type, amount, error });
   }
@@ -261,7 +285,7 @@ export async function checkQuota(
   workspaceId: string,
   type: ResourceType,
   requestedAmount = 1
-): Promise<{ allowed: boolean; used: number; limit: number; remaining: number }> {
+): Promise<{ allowed: boolean; used: number; limit: number; remaining: number; addon_tokens?: number }> {
   // QUOTA_DISABLED=true → always allow (unlimited API mode)
   if (process.env.QUOTA_DISABLED === 'true') {
     return { allowed: true, used: 0, limit: Infinity, remaining: Infinity };
@@ -280,7 +304,11 @@ export async function checkQuota(
     );
 
     const limits = limitsRes.rows[0] ?? PLAN_QUOTA_PRESETS.free;
-    const limit = getLimitByResource(type, limits);
+    const baseLimit = getLimitByResource(type, limits);
+
+    // P1: Add-on tokens increase the effective limit for ai_tokens only
+    const addonTokens = type === 'ai_tokens' ? await getAddonTokens(workspaceId) : 0;
+    const limit = baseLimit + addonTokens;
 
     const period = periodForResource(type);
     const usageRes = await p.query(
@@ -296,6 +324,7 @@ export async function checkQuota(
       used,
       limit,
       remaining,
+      ...(addonTokens > 0 ? { addon_tokens: addonTokens } : {}),
     };
   } catch (error) {
     observability.warn('Failed to check quota', { workspaceId, type, error });
@@ -344,4 +373,118 @@ export async function getWorkspaceUsage(workspaceId: string): Promise<{
   }
 
   return { plan: row.plan, quotas };
+}
+
+// ── P1: Add-on Token Subscriptions ─────────────────────────────────────────
+
+/**
+ * Get total addon tokens still valid for a workspace (non-expired).
+ */
+export async function getAddonTokens(workspaceId: string): Promise<number> {
+  const p = pool;
+  if (!p) return 0;
+  try {
+    const result = await p.query(
+      `SELECT COALESCE(SUM(tokens_bought), 0) as total
+       FROM addon_subscriptions
+       WHERE workspace_id = $1 AND addon_type = 'tokens'
+         AND (expires_at IS NULL OR expires_at > NOW())`,
+      [workspaceId]
+    );
+    return parseInt(result.rows[0]?.total ?? '0', 10);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Purchase an addon token bundle (inserts subscription record).
+ * Returns the new subscription id.
+ */
+export async function createAddonSubscription(
+  workspaceId: string,
+  addonType: string,
+  tokensBought: number,
+  stripePaymentIntent?: string,
+  expiresAt?: Date,
+): Promise<string> {
+  const p = pool;
+  if (!p) throw new Error('DB not available');
+  const result = await p.query(
+    `INSERT INTO addon_subscriptions (workspace_id, addon_type, tokens_bought, stripe_payment_intent, expires_at)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [workspaceId, addonType, tokensBought, stripePaymentIntent ?? null, expiresAt ?? null]
+  );
+  return result.rows[0].id;
+}
+
+/**
+ * Get all active addon subscriptions for a workspace.
+ */
+export async function getAddonSubscriptions(workspaceId: string): Promise<any[]> {
+  const p = pool;
+  if (!p) return [];
+  const result = await p.query(
+    `SELECT id, addon_type, tokens_bought, expires_at, created_at
+     FROM addon_subscriptions
+     WHERE workspace_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY created_at DESC`,
+    [workspaceId]
+  );
+  return result.rows;
+}
+
+// ── P1: Multi-dimensional cost by model ──────────────────────────────────
+
+export interface ModelUsageRow {
+  model_name: string;
+  tokens_used: number;
+  cost_usd: number;
+  calls: number;
+}
+
+/**
+ * Returns AI token usage broken down by model name.
+ * Requires usage_records to include metadata->>'model_name'.
+ */
+export async function getUsageByModel(
+  workspaceId: string,
+  period?: string,
+): Promise<ModelUsageRow[]> {
+  const p = pool;
+  if (!p) return [];
+  const usePeriod = period ?? monthPeriod();
+  try {
+    const result = await p.query(
+      `SELECT
+         COALESCE(metadata->>'model_name', 'unknown') AS model_name,
+         SUM(amount) AS tokens_used,
+         COUNT(*) AS calls
+       FROM usage_records
+       WHERE workspace_id = $1
+         AND resource_type = 'ai_tokens'
+         AND period = $2
+       GROUP BY metadata->>'model_name'
+       ORDER BY tokens_used DESC`,
+      [workspaceId, usePeriod]
+    );
+    const providerModelMap: Record<string, string> = {
+      'gemini-2.5-flash': 'gemini', 'gemini-1.5-flash': 'gemini',
+      'gpt-4o-mini': 'openai', 'gpt-4o': 'openai', 'gpt-4': 'openai',
+      'claude-3-5-sonnet-20241022': 'claude', 'claude-3-haiku': 'claude',
+    };
+    return result.rows.map(r => {
+      const provider = providerModelMap[r.model_name] ?? 'default';
+      const tokens = parseInt(r.tokens_used, 10);
+      return {
+        model_name: r.model_name,
+        tokens_used: tokens,
+        cost_usd: estimateUsdCost(tokens, provider),
+        calls: parseInt(r.calls, 10),
+      };
+    });
+  } catch (err) {
+    observability.warn('getUsageByModel failed', { workspaceId, error: String(err) });
+    return [];
+  }
 }

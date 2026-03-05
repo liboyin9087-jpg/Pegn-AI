@@ -617,3 +617,50 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace ON audit_logs(workspace_id, 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC);
 -- Note: audit_logs intentionally has NO updated_at trigger — records are immutable.
+
+-- ============================================================
+-- P1: Feedback submissions
+-- ============================================================
+CREATE TABLE IF NOT EXISTS feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+    type TEXT NOT NULL CHECK (type IN ('bug', 'idea', 'other')),
+    message TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_workspace ON feedback(workspace_id, created_at DESC);
+
+-- ============================================================
+-- P1: Onboarding completion tracking
+-- ============================================================
+CREATE TABLE IF NOT EXISTS onboarding_progress (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_step INTEGER NOT NULL DEFAULT 0,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(workspace_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_workspace ON onboarding_progress(workspace_id);
+DROP TRIGGER IF EXISTS update_onboarding_progress_updated_at ON onboarding_progress;
+CREATE TRIGGER update_onboarding_progress_updated_at BEFORE UPDATE ON onboarding_progress FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- P1: Usage-based Add-on subscriptions
+-- ============================================================
+CREATE TABLE IF NOT EXISTS addon_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    addon_type TEXT NOT NULL DEFAULT 'tokens',  -- tokens | calls | agent_runs
+    tokens_bought INTEGER NOT NULL DEFAULT 0,
+    stripe_payment_intent TEXT,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_addon_subs_workspace ON addon_subscriptions(workspace_id, expires_at);

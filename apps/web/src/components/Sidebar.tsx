@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText, Plus, MoreHorizontal, Edit2, Trash2, Upload,
   LogOut, Search, ChevronRight, FilePlus, Bell, GripVertical,
-  Star, Trash, RotateCcw, History, Zap, CreditCard,
+  Star, Trash, RotateCcw, History, Zap, CreditCard, MessageSquarePlus,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, KeyboardSensor,
@@ -49,6 +49,7 @@ interface Props {
   onOpenTrash?: () => void;
   onOpenAutomations?: () => void;
   onOpenBilling?: () => void;
+  onOpenFeedback?: () => void;
   onFavoriteDoc?: (id: string, isFav: boolean) => void;
 }
 
@@ -384,7 +385,7 @@ export default function Sidebar({
   onMoveDoc,
   inboxUnreadCount = 0, onOpenInbox, onLogout,
   onClose, onOpenCommand,
-  favorites = [], trashCount = 0, onOpenTrash, onOpenAutomations, onOpenBilling, onFavoriteDoc,
+  favorites = [], trashCount = 0, onOpenTrash, onOpenAutomations, onOpenBilling, onOpenFeedback, onFavoriteDoc,
 }: Props) {
   const [favoritesOpen, setFavoritesOpen] = useState(true);
   const [menuDocId, setMenuDocId] = useState<string | null>(null);
@@ -744,6 +745,17 @@ export default function Sidebar({
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
             <CreditCard size={13} style={{ color: '#2563eb' }} />
             計費與用量
+          </button>
+        )}
+
+        {onOpenFeedback && (
+          <button onClick={() => { onOpenFeedback(); onClose?.(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
+            style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-panel-hover)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+            <MessageSquarePlus size={13} style={{ color: '#7c3aed' }} />
+            回報問題 / 建議
           </button>
         )}
 

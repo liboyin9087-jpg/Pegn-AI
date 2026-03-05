@@ -1,10 +1,11 @@
 # Pegn-AI — AI-Native Work OS
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Phase-3_Complete-22c55e?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Phase-4_(P1)_Complete-22c55e?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Stack-React_19_|_Node.js_|_PostgreSQL_|_Gemini-2383e2?style=for-the-badge" />
   <img src="https://img.shields.io/badge/Deploy-Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
   <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" />
+  <img src="https://img.shields.io/badge/Enterprise-SAML_|_SCIM_|_Audit-7c3aed?style=for-the-badge" />
   <img src="https://img.shields.io/badge/License-MIT-6366f1?style=for-the-badge" />
 </p>
 
@@ -25,6 +26,8 @@
 - [功能特性詳解](#功能特性詳解)
 - [開發指南](#開發指南)
 - [Roadmap](#roadmap)
+
+> **Phase 4 (P1) 更新**：新增企業 SSO（SAML 2.0）、SCIM 使用者佈建、Audit CSV/JSON 匯出、In-app 回報功能、Onboarding 完成率追蹤、模型自動降級策略、Usage-based Add-on 計費、多維度成本儀表板。詳見 [Roadmap](#roadmap)。
 
 ---
 
@@ -58,23 +61,40 @@
 - 多視圖管理，自訂欄位與排版
 - 集合匯出功能
 
-### 6. 企業級基礎設施
+### 6. 企業級身分與存取管理
 - **RBAC**：工作區 Admin / Editor / Viewer 三層角色，細粒度到資源操作
-- **Billing & Quota**：按方案限制 AI tokens（月）、AI 呼叫（日）、Agent 執行（日）
+- **SAML 2.0 Enterprise SSO**：透過 `SAML_ENTRY_POINT` + `SAML_CERT` 串接 Okta / Azure AD / Ping Identity 等任一 IdP；支援 SP-initiated flow，完成後簽發 JWT，與既有 OAuth 流程一致
+- **SCIM 2.0 使用者佈建**：`/scim/v2/Users` + `/scim/v2/Groups` 全套端點，支援 IdP 自動建立 / 停用帳戶；Bearer Token 獨立驗證（`SCIM_TOKEN` env），不干擾 JWT Auth
+- **Audit Export API**：`GET /workspaces/:id/audit-logs?format=csv|json` 可下載帶 `Content-Disposition` attachment 的稽核紀錄；最多 500 筆，欄位含 action / actor / resource / IP / timestamp
+
+### 7. 計費、用量與成本治理
+- **Billing & Quota**：按方案限制 AI tokens（月）、AI 呼叫（日）、Agent 執行（日）；超限 HTTP 429
+- **Usage-based Add-on**：可購買額外 Token 套件（`ADDON_TOKEN_PACKAGES`）；一次性 Stripe Checkout，tokens 限時有效，自動計入有效 quota
+- **多維度成本儀表板**：`GET /billing/usage/by-model` 回傳每個 LLM 模型的 token 用量與預估 USD；BillingDashboard 折疊清單即時展示 GPT-4o / Gemini 各別消耗
+- **Cost Alert**：月度 token 預算使用超過閾值（預設 80%）自動 trigger 橫幅警示
+
+### 8. 可靠性與可觀測性
+- **模型自動降級**：`FallbackAgentLLM` 包裝任意 Provider 鏈（`AGENT_FALLBACK_CHAIN=gemini,openai,claude`），主要模型失敗後依序嘗試備用，不中斷 Agent 執行
 - **Webhook**：DB 持久化訂閱，伺服器重啟後訂閱不遺失
 - **Idempotency Keys**：離線 mutation 安全重播
 - **Rate Limiting**：API / Auth / AI 路由分層限速
-- **Observability**：Prometheus 指標匯出、結構化日誌、健康儀表板
+- **Prometheus 指標**：HTTP latency、AI call count、Agent success rate 等 20+ 指標匯出
 
-### 7. Offline-First PWA
+### 9. 使用者體驗基礎設施
+- **In-app 回報功能**：Sidebar 「回報問題」開啟 FeedbackModal，支援 bug / idea / other 三類，即時送達後端 `feedback` table
+- **Onboarding 完成率追蹤**：`onboarding_progress` table 記錄每位使用者的 step + completed_at，管理員可查詢完成率趨勢
+- **Incident 流程文件**：[`docs/incident-response.zh-TW.md`](docs/incident-response.zh-TW.md) — P0-P3 嚴重度定義、on-call 升級矩陣、Runbook 模板、Post-mortem checklist
+
+### 10. Offline-First PWA
 - **Service Worker**（Workbox）：靜態資源快取優先，API 請求 Stale-While-Revalidate
 - **IndexedDB 操作佇列**：離線時 mutation 入隊，恢復連線後自動重播（含指數退避）
 - `navigator.onLine` 事件監聽 + 30 秒輪詢雙重保障
 - PWA 可安裝，支援 Standalone 模式
 
-### 8. 身分驗證
+### 11. 身分驗證
 - 電子郵件/密碼（bcrypt 雜湊）+ JWT（可設定有效期）
 - **OAuth 2.0**：Google 與 GitHub 一鍵登入
+- **SAML 2.0**：企業 IdP 單一登入（Okta / Azure AD 等），啟用條件：設定 `SAML_ENTRY_POINT` + `SAML_CERT`
 - Token 透過 URL hash fragment 傳遞，不記錄於伺服器日誌或瀏覽器歷史
 - 生產環境強制驗證 `JWT_SECRET` 非預設值
 
@@ -199,9 +219,20 @@ cp .env.example .env
 |------|------|
 | `JWT_SECRET` | JWT 簽署密鑰，生產環境必須設為隨機 32+ 字元字串 |
 | `GEMINI_API_KEY` | Google Gemini API Key（AI 全功能依賴）|
-| `OPENAI_API_KEY` | OpenAI API Key（PromptOps 可切換 provider）|
+| `OPENAI_API_KEY` | OpenAI API Key（PromptOps / Agent Fallback Chain 使用）|
+| `ANTHROPIC_API_KEY` | Claude API Key（Agent Fallback Chain 第三層）|
 | `PROMPT_OPS_LLM_PROVIDER` | Prompt 測試 provider：`auto` / `gemini` / `openai` / `mock` |
+| `AGENT_LLM_PROVIDER` | Agent 主要 LLM：`auto` / `gemini` / `openai` / `claude` |
+| `AGENT_FALLBACK_CHAIN` | 降級順序，逗號分隔，預設 `gemini,openai,claude` |
 | `DATABASE_URL` | PostgreSQL 連線字串 |
+| `SAML_ENTRY_POINT` | IdP SSO URL（Okta / Azure AD 等），留空則停用 SAML |
+| `SAML_CERT` | IdP 簽名憑證（PEM 格式，去掉 header/footer）|
+| `SAML_ISSUER` | SP Entity ID，預設 `pegn-ai` |
+| `SCIM_TOKEN` | SCIM 2.0 Bearer Token，由 IdP 設定，留空則停用 SCIM |
+| `STRIPE_SECRET_KEY` | Stripe 密鑰（Add-on checkout 必須）|
+| `STRIPE_PRICE_ID_ADDON_STARTER` | Starter Token add-on Stripe Price ID |
+| `STRIPE_PRICE_ID_ADDON_GROWTH` | Growth Token add-on Stripe Price ID |
+| `STRIPE_PRICE_ID_ADDON_SCALE` | Scale Token add-on Stripe Price ID |
 
 ### Docker 部署 vs 本地開發差異
 
@@ -228,7 +259,21 @@ cp .env.example .env
 | `GET` | `/api/v1/auth/me` | 取得當前用戶資訊 |
 | `GET` | `/api/v1/auth/google` | Google OAuth 流程 |
 | `GET` | `/api/v1/auth/github` | GitHub OAuth 流程 |
-| `GET` | `/api/v1/auth/oauth/status` | 已配置的 OAuth 提供商 |
+| `GET` | `/api/v1/auth/oauth/status` | 已配置的 OAuth 提供商清單 |
+| `GET` | `/api/v1/auth/saml` | SAML SP-initiated 流程（redirect 至 IdP）|
+| `POST` | `/api/v1/auth/saml/callback` | SAML ACS callback（IdP 完成後回傳）|
+
+### SCIM 2.0（企業 IdP 使用者佈建）
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| `GET` | `/scim/v2/Users` | 列出使用者（支援 `filter` + `startIndex` + `count`）|
+| `POST` | `/scim/v2/Users` | 建立使用者（IdP 呼叫）|
+| `GET` | `/scim/v2/Users/:id` | 取得使用者 |
+| `PUT` | `/scim/v2/Users/:id` | 完整替換使用者 |
+| `PATCH` | `/scim/v2/Users/:id` | 部分更新（active 切換即停用帳戶）|
+| `DELETE` | `/scim/v2/Users/:id` | 停用帳戶（設 active=false）|
+| `GET` | `/scim/v2/Groups` | 列出工作區群組 |
 
 ### 工作區與文檔
 
@@ -322,6 +367,27 @@ cp .env.example .env
 | `GET` | `/api/v1/billing/plans` | 取得可用方案與預設配額（free/pro/team） |
 | `GET` | `/api/v1/billing/plan` | 取得工作區目前方案（需 workspace admin） |
 | `POST` | `/api/v1/billing/plan` | 更新工作區方案（需 workspace admin） |
+| `GET` | `/api/v1/billing/cost-alert` | 月度成本警示狀態（pct / cost_usd / remaining_usd）|
+| `GET` | `/api/v1/billing/usage/by-model` | 依 LLM 模型分類的 token 用量與預估成本 |
+| `GET` | `/api/v1/billing/addon` | 列出 Add-on 套件定義 + 工作區已購訂閱 |
+| `POST` | `/api/v1/billing/addon/checkout` | 建立 Stripe Checkout Session（一次性 Add-on 購買）|
+
+### In-app 回報 & Onboarding
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| `POST` | `/api/v1/feedback` | 提交回報（type: bug/idea/other + message）|
+| `GET` | `/api/v1/feedback` | 查詢回報清單（workspace admin，支援 `?workspace_id`）|
+| `POST` | `/api/v1/workspaces/:id/onboarding` | 更新 onboarding 進度（step + completed）|
+| `GET` | `/api/v1/workspaces/:id/onboarding` | 取得使用者 onboarding 進度 |
+
+### 稽核日誌（Audit Logs）
+
+| 方法 | 路徑 | 說明 |
+|------|------|------|
+| `GET` | `/api/v1/workspaces/:id/audit-logs` | 查詢稽核記錄（需 workspace:admin）|
+| `GET` | `/api/v1/workspaces/:id/audit-logs?format=csv` | 下載 CSV（帶 Content-Disposition）|
+| `GET` | `/api/v1/workspaces/:id/audit-logs?format=json` | 下載 JSON（帶 Content-Disposition）|
 
 ### Prompt 管理
 
@@ -385,9 +451,12 @@ Agent 工作流
 企業功能
 ├── workspace_invites      邀請連結（token、expires_at、role_id）
 ├── quota_limits           工作區配額方案（free / pro / enterprise）
-├── usage_records          資源用量記錄（按日/月唯一累計）
+├── usage_records          資源用量記錄（含 metadata->>'model_name'）
+├── addon_subscriptions    購買的 Token Add-on 套件（expires_at、stripe_payment_intent）
 ├── api_idempotency_keys   冪等鍵（離線 mutation 安全重播）
-└── webhook_subscriptions  Webhook 訂閱（events[]、secret、user_id）
+├── webhook_subscriptions  Webhook 訂閱（events[]、secret、user_id）
+├── feedback               In-app 回報（type、message、user_id、workspace_id）
+└── onboarding_progress    Onboarding 進度（user_id、workspace_id、last_step、completed_at）
 ```
 
 **向量索引**：`kg_entities.embedding` + `blocks.content_vector` 使用 `IVFFlat (vector_cosine_ops)`
@@ -507,6 +576,40 @@ auto / hybrid / graph         Promise.allSettled（並行）
 | `comment:create` | ✅ | ✅ | ✅ |
 | `comment:resolve` | ✅ | ✅ | ❌ |
 
+### Model Auto-Degradation 模型自動降級
+
+```
+AGENT_FALLBACK_CHAIN=gemini,openai,claude
+
+FallbackAgentLLM.generate()
+    │
+    ├── [1] GeminiAgentLLM → 成功則回傳
+    │        │
+    │        └── 失敗 (API error / timeout)
+    │
+    ├── [2] OpenAIAgentLLM → 成功則回傳，記錄 warning log
+    │        │
+    │        └── 失敗
+    │
+    └── [3] ClaudeAgentLLM → 成功則回傳，記錄 warning log
+             │
+             └── 全錯：丟出最後一個錯誤，Agent step 標記 failed
+```
+
+streamContent 同樣支援降級鏈，SSE 不中斷。
+
+### 鎏動計費儀表板（By-Model Breakdown）
+
+`usage_records.metadata` JSONB 存傲 `model_name`，`getUsageByModel()` 就 GROUP BY 本月記錄展開：
+
+| model_name | tokens | cost_usd |
+|------------|--------|----------|
+| gemini-2.5-flash | 84,210 | $0.0042 |
+| gpt-4o | 12,500 | $0.1250 |
+| claude-3-5-sonnet | 3,000 | $0.0135 |
+
+BillingDashboard 折疊清單即時呈現，不需補勅。20 個指標匯出
+
 ### Billing 配額預設值
 
 | 資源 | Free 方案上限 | 計算週期 |
@@ -514,7 +617,13 @@ auto / hybrid / graph         Promise.allSettled（並行）
 | AI Tokens | 100,000 | 月度累計 |
 | AI API 呼叫 | 200 次 | 每日重置 |
 | Agent 執行 | 20 次 | 每日重置 |
+**Token Add-on 套件**（一次性購買）：
 
+| 套件 ID | 包含 tokens | Stripe Price ID env |
+|----------|-------------|---------------------|
+| `starter` | 500,000 | `STRIPE_PRICE_ID_ADDON_STARTER` |
+| `growth` | 2,000,000 | `STRIPE_PRICE_ID_ADDON_GROWTH` |
+| `scale` | 10,000,000 | `STRIPE_PRICE_ID_ADDON_SCALE` |
 超限回傳 `HTTP 429` 與剩餘配額資訊。
 
 ---
@@ -617,15 +726,28 @@ agent.completed     workspace.member_added
 - [x] **CI/CD（GitHub Actions）**：typecheck + unit test + build + docker-build 兩 job 流水線
 - [x] **`.env.example` 環境變數範本**：完整文件，一行複製即可啟動
 
-### 規劃中（Phase 4）
+#### Phase 4 (P1) — 企業功能與計費強化
+- [x] **SAML 2.0 Enterprise SSO**：IdP-agnostic（Okta / Azure AD 等），SP-initiated flow，JWT 簽發
+- [x] **SCIM 2.0 使用者佈建**：完整 Users/Groups API，支援 IdP 自動化帳戶管理
+- [x] **Audit Export API**：`?format=csv|json` 參數，瀏覽器可直接下載稽核紀錄
+- [x] **In-app 回報功能**：FeedbackModal（bug / idea / other）+ 後端寫入 + Sidebar 按鈕入口
+- [x] **Onboarding 完成率追蹤**：`onboarding_progress` table，逐步記錄 + completed_at 時間戳
+- [x] **模型自動降級策略**：`FallbackAgentLLM` 依序嘗試 `AGENT_FALLBACK_CHAIN` 中的 Provider
+- [x] **Usage-based Token Add-on**：3 tier 套件，Stripe Checkout，quota 自動計入
+- [x] **多維度成本儀表板**：依模型分類用量（model_name in metadata），BillingDashboard 折疊清單
+- [x] **Incident 流程文件**：P0-P3 嚴重度矩陣、on-call 升級路徑、Runbook + Post-mortem 模板
+- [x] **多 Provider 支援**：`ClaudeAgentLLM`（Anthropic SDK）+ `AGENT_LLM_PROVIDER` env 切換
 
-- [ ] **PostgreSQL Row-Level Security**：DB 層多租戶資料隔離
-- [ ] **Stripe 整合**：訂閱計劃管理、付款 Webhook
+### 規劃中（Phase 5 / P2）
+
+- [ ] **OpenAPI / Swagger UI**：`swagger-jsdoc` + `/api-docs` 端點，機器可讀 API 規格
+- [ ] **Webhook 模板商店**：`webhook_templates` catalog，從模板一鍵建立訂閱
+- [ ] **文件模板商店**：`document_templates` table，公開 / 工作區私有模板瀏覽與套用
+- [ ] **完整 i18n 框架**：`react-i18next`，支援 zh-TW / en，從 OnboardingModal 開始遷移
+- [ ] **資料駐留架構**：EU / US / APAC region 設計文件與 Cloud Run region mapping
 - [ ] **OpenTelemetry**：分散式 tracing（Jaeger / Grafana），升級現有 Prometheus 指標
-- [ ] **遞迴 Agent 分解**：Worker 輸出可觸發子 Worker（真正多層遞迴）
+- [ ] **PostgreSQL Row-Level Security**：DB 層多租戶資料隔離
 - [ ] **多模態上傳**：圖片 OCR、音訊轉錄 → 自動索引進 KG
-- [ ] **自訂 AI 模型**：OpenAI、本地 Ollama 支援
-- [ ] **動態 Feature Flags**：DB 儲存 + 管理 API，無需重啟切換
 - [ ] **KG 大圖優化**：能量閾值停止條件（> 50 節點穩定排版）
 
 ---

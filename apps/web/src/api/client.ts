@@ -626,6 +626,28 @@ export const openBillingPortal = (workspaceId: string, customerId: string, retur
     method: 'POST',
     body: JSON.stringify({ workspace_id: workspaceId, customer_id: customerId, return_url: returnUrl }),
   });
+// P1-A8: Token Add-on
+export const getAddonInfo = (workspaceId: string) =>
+  api<{ packages: any[]; subscriptions: any[] }>(`/billing/addon?workspace_id=${workspaceId}`);
+export const postAddonCheckout = (workspaceId: string, packageId: string, successUrl: string, cancelUrl: string) =>
+  api<{ url: string; subscription_id?: string }>('/billing/addon/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ workspace_id: workspaceId, package_id: packageId, success_url: successUrl, cancel_url: cancelUrl }),
+  });
+// P1-A9: Usage by model
+export const getUsageByModel = (workspaceId: string, period?: string) => {
+  const qs = new URLSearchParams({ workspace_id: workspaceId });
+  if (period) qs.set('period', period);
+  return api<{ period: string; breakdown: Array<{ model_name: string; tokens: number; cost_usd: number; calls: number }> }>(
+    `/billing/usage/by-model?${qs}`
+  );
+};
+// P1-A5: In-app feedback
+export const submitFeedback = (type: 'bug' | 'idea' | 'other', message: string, workspaceId?: string, metadata?: Record<string, unknown>) =>
+  api<{ id: string; type: string; created_at: string }>('/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ type, message, workspace_id: workspaceId, metadata }),
+  });
 export const getWorkspaceAuditLogs = (workspaceId: string, params?: { action?: string; limit?: number }) => {
   const qs = new URLSearchParams();
   if (params?.action) qs.set('action', params.action);
