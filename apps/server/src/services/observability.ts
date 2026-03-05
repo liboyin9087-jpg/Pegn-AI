@@ -11,6 +11,56 @@ const dbQueryCounter      = meter.createCounter('db_queries_total',          { d
 const dbDurationHist      = meter.createHistogram('db_query_duration_ms',    { description: 'DB query duration in ms', unit: 'ms' });
 const searchDurationHist  = meter.createHistogram('search_duration_ms',      { description: 'Search operation duration in ms', unit: 'ms' });
 
+// ── In-process latency ring buffer (SLO / P95 tracking) ─────────────────
+const LATENCY_BUFFER_SIZE = 1000;
+
+class LatencyBuffer {
+  private buckets = new Map<string, Float64Array>();
+  private ptrs    = new Map<string, number>();
+  private counts  = new Map<string, number>();
+
+  push(label: string, ms: number): void {
+    if (!this.buckets.has(label)) {
+      this.buckets.set(label, new Float64Array(LATENCY_BUFFER_SIZE));
+      this.ptrs.set(label, 0);
+      this.counts.set(label, 0);
+    }
+    const buf = this.buckets.get(label)!;
+    const ptr = this.ptrs.get(label)!;
+    buf[ptr % LATENCY_BUFFER_SIZE] = ms;
+    this.ptrs.set(label, ptr + 1);
+    this.counts.set(label, Math.min((this.counts.get(label) ?? 0) + 1, LATENCY_BUFFER_SIZE));
+  }
+
+  percentile(label: string, pct: number): number {
+    const buf   = this.buckets.get(label);
+    const count = this.counts.get(label) ?? 0;
+    if (!buf || count === 0) return 0;
+    const slice = Array.from(buf.subarray(0, count)).sort((a, b) => a - b);
+    const idx   = Math.max(0, Math.ceil(slice.length * pct / 100) - 1);
+    return Math.round(slice[idx] * 10) / 10;
+  }
+
+  p50(label: string): number { return this.percentile(label, 50); }
+  p95(label: string): number { return this.percentile(label, 95); }
+  sampleCount(label: string): number { return this.counts.get(label) ?? 0; }
+}
+
+export const latencyBuffer = new LatencyBuffer();
+
+export interface LatencyStats {
+  p50: number;
+  p95: number;
+  sample_count: number;
+}
+
+export function getLatencyStats(): Record<string, LatencyStats> {
+  return {
+    http: { p50: latencyBuffer.p50('http'), p95: latencyBuffer.p95('http'), sample_count: latencyBuffer.sampleCount('http') },
+    ai:   { p50: latencyBuffer.p50('ai'),   p95: latencyBuffer.p95('ai'),   sample_count: latencyBuffer.sampleCount('ai')   },
+  };
+}
+
 export interface MetricData {
   name: string;
   value: number;
@@ -97,6 +147,9 @@ export class ObservabilityService {
     const attrs = { 'http.method': method, 'http.route': path, 'http.status_code': statusCode };
     httpRequestCounter.add(1, attrs);
     httpDurationHist.record(duration, attrs);
+
+    // In-process latency ring buffer
+    latencyBuffer.push('http', duration);
   }
 
   recordDatabaseQuery(query: string, duration: number, success: boolean): void {

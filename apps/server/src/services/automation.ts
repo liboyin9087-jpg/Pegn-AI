@@ -280,6 +280,15 @@ export async function startScheduler(): Promise<void> {
     if (!pool) return;
     try {
       const now = new Date();
+
+      // ── Daily data-retention cleanup (02:00 UTC) ──────────────────────────
+      if (now.getUTCHours() === 2 && now.getUTCMinutes() === 0) {
+        const { runRetentionCleanup } = await import('./retention.js');
+        runRetentionCleanup(pool)
+          .then(result => console.log('[retention] cleanup complete', result.deleted))
+          .catch(err  => console.error('[retention] cleanup error:', err));
+      }
+
       const { rows: cronAutomations } = await pool.query(
         `SELECT * FROM automations WHERE trigger_type = 'schedule.cron' AND enabled = true`,
       );

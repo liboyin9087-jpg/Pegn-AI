@@ -19,6 +19,7 @@ import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
 import { ToastProvider, useToast } from './components/Toast';
 import CookieConsent from './components/CookieConsent';
+import BillingDashboard from './components/BillingDashboard';
 import { SearchModal } from './components/SearchModal';
 import { VersionHistory } from './components/VersionHistory';
 import { AutomationPanel } from './components/AutomationPanel';
@@ -69,6 +70,7 @@ export default function App() {
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [billingOpen, setBillingOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -628,6 +630,36 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Billing Panel */}
+      <AnimatePresence>
+        {billingOpen && workspace && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setBillingOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(0,0,0,0.3)' }}
+            />
+            <motion.div
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              style={{
+                position: 'fixed', right: 0, top: 0, bottom: 0, width: 480,
+                background: 'var(--color-surface)', borderLeft: '1px solid var(--color-border)',
+                zIndex: 901, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}
+            >
+              <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontWeight: 600, fontSize: 15 }}>💳 計費與用量</span>
+                <button onClick={() => setBillingOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)' }}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <BillingDashboard workspaceId={workspace.id} onClose={() => setBillingOpen(false)} />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Command Bar */}
       <CommandBar
         open={cmdOpen}
@@ -695,6 +727,7 @@ export default function App() {
                 trashCount={trashItems.length}
                 onOpenTrash={() => setTrashOpen(true)}
                 onOpenAutomations={() => setAutomationsOpen(true)}
+                onOpenBilling={() => setBillingOpen(true)}
                 onFavoriteDoc={handleToggleFavorite}
               />
             </ErrorBoundary>
