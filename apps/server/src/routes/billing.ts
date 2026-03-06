@@ -63,6 +63,16 @@ export function registerBillingRoutes(app: Express): void {
       }
     }
 
+    if (
+      ai_tokens_per_month === undefined &&
+      ai_calls_per_day === undefined &&
+      agent_runs_per_day === undefined &&
+      cost_usd_ceiling === undefined
+    ) {
+      res.status(400).json({ error: 'No valid fields provided' });
+      return;
+    }
+
     try {
       await updateQuotaLimits(workspaceId, { ai_tokens_per_month, ai_calls_per_day, agent_runs_per_day, cost_usd_ceiling });
       const updated = await getWorkspaceUsage(workspaceId);

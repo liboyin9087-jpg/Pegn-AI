@@ -1,11 +1,51 @@
 import type { Response, NextFunction } from 'express';
 import { pool } from '../db/client.js';
+import { getWorkspaceRole } from '../lib/workspaceRoles.js';
 import { AuthRequest } from './auth.js';
 import { observability } from '../services/observability.js';
 
 export interface RBACRequest extends AuthRequest {
     userPermissions?: string[];
     userRole?: string;
+}
+
+function getResultRowCount(result: { rowCount?: number | null; rows?: unknown[] }): number {
+    if (typeof result.rowCount === 'number') return result.rowCount;
+    return Array.isArray(result.rows) ? result.rows.length : 0;
+}
+
+async function checkLegacyPermissionFallback(
+    workspaceId: string,
+    userId: string,
+    requiredPermission: string
+): Promise<{ isMember: boolean; allowed: boolean }> {
+    const p = pool;
+    if (!p) return { isMember: false, allowed: false };
+
+    const membership = await p.query(
+        'SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2 LIMIT 1',
+        [workspaceId, userId]
+    );
+
+    if (getResultRowCount(membership) === 0) {
+        return { isMember: false, allowed: false };
+    }
+
+    const permissionCheck = await p.query(
+        `SELECT 1
+         FROM user_roles ur
+         LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
+         LEFT JOIN permissions perm ON perm.id = rp.permission_id
+         WHERE ur.user_id = $2
+           AND perm.name IN ($3, 'workspace:admin')
+         LIMIT 1`,
+        [workspaceId, userId, requiredPermission]
+    );
+
+    return {
+        isMember: true,
+        allowed: getResultRowCount(permissionCheck) > 0,
+    };
 }
 
 /**
@@ -95,75 +135,39 @@ export const checkPermission = (
         }
 
         try {
-            // 1. Get user's role and permissions in this workspace
-            // We join with roles table to get the permissions array.
-            // We also support the legacy 'role' string if role_id is null.
-            const result = await p.query(`
-                SELECT 
-                    m.role as legacy_role,
-                    r.name as role_name,
-                    r.permissions
-                FROM workspace_members m
-                LEFT JOIN roles r ON m.role_id = r.id
-                WHERE m.user_id = $1 AND m.workspace_id = $2
-            `, [userId, workspaceId]);
-
-            if ((result.rowCount ?? 0) === 0) {
-                return res.status(403).json({ error: 'Forbidden: You are not a member of this workspace' });
-            }
-
-            const { legacy_role, role_name, permissions } = result.rows[0];
-
-            // 2. Determine permissions
-            let userPermissions: string[] = Array.isArray(permissions)
-                ? permissions
-                : typeof permissions === 'string'
-                    ? (() => {
-                        try {
-                            const parsed = JSON.parse(permissions);
-                            return Array.isArray(parsed) ? parsed : [];
-                        } catch {
-                            return [];
-                        }
-                    })()
-                    : [];
-
-            // If it's a legacy role, map it to default permissions
-            if (userPermissions.length === 0 && legacy_role) {
-                if (legacy_role === 'owner' || legacy_role === 'admin') {
-                    userPermissions = [
-                        'workspace:admin',
-                        'collection:create', 'collection:edit', 'collection:delete', 'collection:view',
-                        'document:create', 'document:edit', 'document:delete', 'document:view',
-                        'comment:view', 'comment:create', 'comment:resolve'
-                    ];
-                } else if (legacy_role === 'editor') {
-                    userPermissions = [
-                        'collection:create', 'collection:edit', 'collection:view',
-                        'document:create', 'document:edit', 'document:view',
-                        'comment:view', 'comment:create', 'comment:resolve'
-                    ];
-                } else if (legacy_role === 'viewer') {
-                    userPermissions = [
-                        'collection:view',
-                        'document:view',
-                        'comment:view', 'comment:create'
-                    ];
+            const roleInfo = await getWorkspaceRole(workspaceId, userId);
+            if (!roleInfo) {
+                const fallback = await checkLegacyPermissionFallback(workspaceId, userId, requiredPermission);
+                if (!fallback.isMember) {
+                    return res.status(403).json({ error: 'Forbidden: You are not a member of this workspace' });
                 }
+                if (fallback.allowed) {
+                    req.userPermissions = [requiredPermission];
+                    return next();
+                }
+                return res.status(403).json({ error: `Forbidden: Missing required permission [${requiredPermission}]` });
             }
 
             // 3. Attach info to request for downstream use
-            req.userPermissions = userPermissions;
-            req.userRole = role_name || legacy_role;
+            req.userPermissions = roleInfo.permissions;
+            req.userRole = roleInfo.effective_role ?? undefined;
 
             // 4. Check if required permission is present
             // Admin role bypasses all checks if they have workspace:admin
-            if (userPermissions.includes('workspace:admin')) {
+            if (roleInfo.is_admin || roleInfo.permissions.includes('workspace:admin')) {
                 return next();
             }
 
-            if (userPermissions.includes(requiredPermission)) {
+            if (roleInfo.permissions.includes(requiredPermission)) {
                 return next();
+            }
+
+            if (roleInfo.permissions.length === 0 && !roleInfo.effective_role) {
+                const fallback = await checkLegacyPermissionFallback(workspaceId, userId, requiredPermission);
+                if (fallback.allowed) {
+                    req.userPermissions = [requiredPermission];
+                    return next();
+                }
             }
 
             observability.warn('RBAC Denial', { userId, requiredPermission, workspaceId });

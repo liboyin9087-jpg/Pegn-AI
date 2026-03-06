@@ -86,6 +86,29 @@ export async function runColumnMigrations(): Promise<void> {
     `ALTER TABLE quota_limits ADD COLUMN IF NOT EXISTS cost_usd_ceiling DECIMAL(10,4) DEFAULT NULL`,
     // P2-2: cost tracking on usage_records
     `ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS cost_usd DECIMAL(10,6) NOT NULL DEFAULT 0`,
+    // P1-1: document search lifecycle columns
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS index_status TEXT`,
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_indexed_at TIMESTAMP WITH TIME ZONE`,
+    `ALTER TABLE documents ADD COLUMN IF NOT EXISTS index_error TEXT`,
+    `UPDATE documents d
+     SET index_status = CASE
+       WHEN EXISTS (
+         SELECT 1
+         FROM search_index si
+         WHERE si.document_id = d.id
+           AND si.content_vector IS NOT NULL
+       ) THEN 'indexed'
+       ELSE 'stale'
+     END
+     WHERE d.index_status IS NULL`,
+    `ALTER TABLE documents ALTER COLUMN index_status SET DEFAULT 'pending'`,
+    `UPDATE documents SET index_status = 'pending' WHERE index_status IS NULL`,
+    `ALTER TABLE documents ALTER COLUMN index_status SET NOT NULL`,
+    `ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_index_status_check`,
+    `ALTER TABLE documents ADD CONSTRAINT documents_index_status_check CHECK (index_status IN ('pending', 'indexed', 'stale', 'failed'))`,
+    // P0: inbox notification type contract for existing databases
+    `ALTER TABLE inbox_notifications DROP CONSTRAINT IF EXISTS inbox_notifications_type_check`,
+    `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'quota_alert', 'automation'))`,
   ];
   for (const sql of alterations) {
     try {

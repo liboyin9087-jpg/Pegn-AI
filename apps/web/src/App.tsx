@@ -8,15 +8,18 @@ import AiSheet from './components/AiSheet';
 import CommandBar from './components/CommandBar';
 import OnboardingModal from './components/OnboardingModal';
 import UploadModal from './components/UploadModal';
+import TaskModal from './components/TaskModal';
+import PresentationOverlay from './components/PresentationOverlay';
 import ErrorBoundary from './components/ErrorBoundary';
 import InboxPanel from './components/InboxPanel';
 import PageHeader from './components/PageHeader';
-import { DashboardShowcase } from './components/agent-dashboard/DashboardShowcase';
 import { CollectionView } from './components/database/CollectionView';
 import { useCollections, useCollectionViews } from './hooks/useCollections';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
+import { AppContextProvider } from './contexts/AppContext';
+import type { CollectionItem } from './contexts/AppContext';
 import {
   getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
   listWorkspaces, createWorkspace,
@@ -56,6 +59,11 @@ export default function App() {
   const [aiInitPrompt, setAiInitPrompt] = useState<string | undefined>();
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('pegn-theme') === 'dark');
 
+  // ── TaskModal & Presentation ──────────────────────────────────────────────
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<CollectionItem | null>(null);
+  const [presentationMode, setPresentationMode] = useState(false);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
     localStorage.setItem('pegn-theme', darkMode ? 'dark' : 'light');
@@ -69,6 +77,7 @@ export default function App() {
     onToggleSidebar: () => setSidebarOpen(o => !o),
     onToggleAI: () => setAiSheetOpen(o => !o),
     onShowHelp: () => setHelpOpen(o => !o),
+    onTogglePresentation: () => setPresentationMode(o => !o),
   });
 
   useEffect(() => {
@@ -268,18 +277,34 @@ export default function App() {
     if (notification.status === 'unread') {
       await handleMarkNotificationRead(notification.id);
     }
-    const documentId = notification.payload?.document_id;
-    const threadId = notification.payload?.thread_id;
-    if (documentId) {
-      const nextDoc = documents.find(d => d.id === documentId);
-      if (nextDoc) {
-        setActiveDoc(nextDoc);
-        setActiveCollection(null);
+
+    switch (notification.type) {
+      case 'mention': {
+        const documentId = notification.payload.document_id;
+        const threadId = notification.payload.thread_id;
+        if (documentId) {
+          const nextDoc = documents.find(d => d.id === documentId);
+          if (nextDoc) {
+            setActiveDoc(nextDoc);
+            setActiveCollection(null);
+          }
+        }
+        if (threadId) {
+          setFocusThreadId(threadId);
+        }
+        break;
       }
+      case 'quota_alert':
+        console.warn('Quota alert notification opened', notification.payload);
+        break;
+      case 'automation':
+        console.warn('Automation notification opened', notification.payload);
+        break;
+      case 'unknown':
+        console.warn('Unknown notification opened', notification.payload);
+        break;
     }
-    if (threadId) {
-      setFocusThreadId(threadId);
-    }
+
     setInboxOpen(false);
   }, [documents, handleMarkNotificationRead]);
 
@@ -456,6 +481,11 @@ export default function App() {
     setAiSheetOpen(true);
   }, []);
 
+  // ── TaskModal helpers ───────────────────────────────────────────────────
+  const openTaskModal = () => { setEditingItem(null); setShowTaskModal(true); };
+  const openEditModal = (item: CollectionItem) => { setEditingItem(item); setShowTaskModal(true); };
+  const closeTaskModal = () => { setShowTaskModal(false); setEditingItem(null); };
+
   if (!authChecked || loading) return (
     <div className="flex items-center justify-center h-screen bg-surface">
       <div className="text-center">
@@ -468,6 +498,28 @@ export default function App() {
   if (!user) return <AuthPage onAuth={handleAuth} />;
 
   return (
+    <AppContextProvider value={{
+      user,
+      workspace,
+      documents,
+      activeDoc,
+      setActiveDoc,
+      handleSelectDoc,
+      handleNewDoc,
+      collections,
+      activeCollection,
+      setActiveCollection,
+      handleSelectCollection,
+      sidebarOpen,
+      setSidebarOpen,
+      presentationMode,
+      setPresentationMode,
+      showTaskModal,
+      editingItem,
+      openTaskModal,
+      openEditModal,
+      closeTaskModal,
+    }}>
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--color-surface)' }}>
       {/* Modals */}
       {showOnboarding && (
@@ -483,6 +535,8 @@ export default function App() {
           onUploaded={handleUploaded}
         />
       )}
+      <TaskModal />
+      <PresentationOverlay />
       <InboxPanel
         open={inboxOpen}
         loading={inboxLoading}
@@ -717,5 +771,6 @@ export default function App() {
         </div>
       </main>
     </div>
+    </AppContextProvider>
   );
 }

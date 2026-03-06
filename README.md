@@ -31,8 +31,9 @@
 ## 核心功能
 
 ### 1. 即時協作編輯器
-- 基於 **BlockSuite** 的塊狀編輯體驗（文字、標題、程式碼區塊、清單等）
+- 協作文件編輯器（text/markdown-first）
 - 透過 **Yjs CRDT** + **Hocuspocus** WebSocket 實現多人即時同步，延遲 < 500ms
+- BlockSuite sandbox / experimental groundwork exists, but is not the production runtime
 - 每 60 秒自動建立快照，支援版本回溯
 - JWT 驗證的 WebSocket 連線，確保工作區安全隔離
 
@@ -86,7 +87,7 @@
 |------|------|
 | **前端框架** | React 19、Vite 5、TypeScript |
 | **樣式** | Tailwind CSS 4、Framer Motion（動畫）|
-| **編輯器** | BlockSuite 0.10（區塊引擎）、Yjs（CRDT）|
+| **編輯器** | React 文件編輯器 + Yjs（CRDT）；BlockSuite prototype in sandbox |
 | **即時同步** | Hocuspocus（WebSocket + Yjs 伺服器）|
 | **知識圖譜 UI** | ReactFlow 11（力導向圖譜渲染）|
 | **PWA** | vite-plugin-pwa + Workbox |
@@ -431,7 +432,7 @@ Pegn-AI/
 │       │   └── icons/icon.svg      # PWA 安裝圖示
 │       ├── src/
 │       │   ├── components/
-│       │   │   ├── Editor.tsx      # BlockSuite 編輯器整合
+│       │   │   ├── Editor.tsx      # 正式文件編輯器與留言 / AI / 協作整合
 │       │   │   ├── Sidebar.tsx     # 導覽側邊欄（文檔樹、集合、成員）
 │       │   │   ├── AgentPanel.tsx  # Agent 執行面板（5 種模板）
 │       │   │   ├── KGPanel.tsx     # 知識圖譜視覺化（拖曳存位置）
@@ -581,7 +582,9 @@ block.updated       agent.completed
 ### 已完成（Phase 1 + Phase 2 + Phase 3）
 
 #### Phase 1 — 核心功能
-- [x] BlockSuite 塊狀編輯器 + Yjs 即時協作（< 500ms 延遲）
+- [x] 協作式文件編輯 + Yjs 即時同步
+- [x] BlockSuite sandbox / prototype groundwork
+- [ ] 正式 block-based editor runtime integration
 - [x] 混合搜尋（BM25 + pgvector RRF 融合）
 - [x] GraphRAG 知識問答（含引用來源）
 - [x] 多 Agent 並行工作流（Promise.allSettled Supervisor Pattern）

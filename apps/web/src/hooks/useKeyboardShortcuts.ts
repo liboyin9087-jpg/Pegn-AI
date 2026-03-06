@@ -6,6 +6,7 @@ export interface ShortcutHandlers {
   onToggleSidebar: () => void;
   onToggleAI: () => void;
   onShowHelp: () => void;
+  onTogglePresentation?: () => void;
 }
 
 /** Returns true when the event target is an editable element (input, textarea, contenteditable). */
@@ -67,6 +68,13 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers) {
         handlers.onShowHelp();
         return;
       }
+
+      // P → Toggle Presentation Mode (not in editable fields)
+      if (e.key.toLowerCase() === 'p' && !mod && !isEditableTarget(e)) {
+        e.preventDefault();
+        handlers.onTogglePresentation?.();
+        return;
+      }
     }
 
     window.addEventListener('keydown', handle);
@@ -99,4 +107,5 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { group: '導航', keys: [`${MOD}⇧A`],        label: '開啟 / 關閉 AI 助手' },
   { group: '導航', keys: ['↑ ↓'],             label: '命令面板導航' },
   { group: '導航', keys: ['↵'],               label: '確認選項' },
+  { group: '導航', keys: ['P'],               label: '切換簡報模式' },
 ];

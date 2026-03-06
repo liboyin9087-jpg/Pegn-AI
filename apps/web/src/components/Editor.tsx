@@ -863,8 +863,9 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
         };
         setCommentThreads((prev) => [optimisticThread, ...prev]);
       } else {
-        setCommentThreads((prev) => [{ ...result.data.thread, sync_status: 'synced' }, ...prev]);
-        focusThreadAnchor(result.data.thread);
+        const syncedThread = result.data.thread;
+        setCommentThreads((prev) => [{ ...syncedThread, sync_status: 'synced' }, ...prev]);
+        focusThreadAnchor(syncedThread);
       }
       setThreadBody('');
       setThreadComposer(null);

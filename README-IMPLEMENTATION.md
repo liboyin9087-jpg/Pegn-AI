@@ -8,7 +8,7 @@ This implementation delivers the core platform foundation for Phase 1 of the AI-
 ### 1. Enhanced Database Schema
 - **Workspace Management**: Complete workspace CRUD operations
 - **Document Management**: Full document lifecycle with versioning
-- **Block Storage**: Structured block storage for BlockSuite integration
+- **Block Storage**: Structured block storage backing the collaborative document editor
 - **Search Index**: Hybrid BM25 + pgvector search capabilities
 - **Snapshot System**: Automated 60-second snapshot persistence
 - **Migration System**: Automatic database schema initialization
@@ -27,12 +27,11 @@ This implementation delivers the core platform foundation for Phase 1 of the AI-
 - **Cleanup Management**: Automatic old snapshot cleanup
 - **Memory Efficient**: Configurable retention limits
 
-### 4. Enhanced BlockSuite Integration
-- **Complete Block Types**: Text, headings, code, lists, quotes, dividers
-- **Event Handling**: Real-time change monitoring
-- **Toolbar Interface**: Dynamic block creation tools
-- **Collaboration Ready**: Full Yjs + Hocuspocus integration
-- **Rich Content**: Support for multiple content formats
+### 4. Editor Runtime Status
+- **Production Runtime**: Collaborative document editor with React + Yjs + Hocuspocus
+- **Experimental Sandbox**: BlockSuite prototype exists outside the production runtime
+- **Planned Integration**: True block-based runtime integration remains future work
+- **Current Focus**: Stable collaboration, comments, inbox, search, and agent workflows
 
 ### 5. Observability & Monitoring
 - **Request Tracking**: Complete HTTP request lifecycle monitoring

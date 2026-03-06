@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS documents (
     title TEXT NOT NULL,
     content JSONB DEFAULT '{}',
     yjs_state BYTEA,
+    index_status TEXT NOT NULL DEFAULT 'pending' CHECK (index_status IN ('pending', 'indexed', 'stale', 'failed')),
+    last_indexed_at TIMESTAMP WITH TIME ZONE,
+    index_error TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_by UUID,
@@ -113,6 +116,7 @@ CREATE TABLE IF NOT EXISTS search_index (
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_documents_workspace_id ON documents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_documents_updated_at ON documents(updated_at);
+CREATE INDEX IF NOT EXISTS idx_documents_index_status ON documents(index_status);
 CREATE INDEX IF NOT EXISTS idx_blocks_document_id ON blocks(document_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_parent_id ON blocks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_block_type ON blocks(block_type);
@@ -398,7 +402,7 @@ CREATE TABLE IF NOT EXISTS inbox_notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('mention')),
+    type TEXT NOT NULL CHECK (type IN ('mention', 'quota_alert', 'automation')),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL CHECK (status IN ('unread', 'read')) DEFAULT 'unread',
     read_at TIMESTAMP WITH TIME ZONE,

@@ -1,8 +1,9 @@
 import type { Express, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
 import { checkPermission } from '../middleware/rbac.js';
-import { searchService } from '../services/search.js';
+import { DocumentModel } from '../models/document.js';
 import { observability } from '../services/observability.js';
+import { searchService } from '../services/search.js';
 
 interface SearchRequest {
   query: string;
@@ -19,8 +20,17 @@ interface SearchRequest {
   vectorWeight?: number;
 }
 
+function sendApiError(res: Response, status: number, code: string, message: string, details: unknown = null) {
+  res.status(status).json({
+    error: {
+      code,
+      message,
+      details,
+    },
+  });
+}
+
 export function registerSearchRoutes(app: Express): void {
-  // Main search endpoint
   app.post('/api/v1/search', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
@@ -29,11 +39,10 @@ export function registerSearchRoutes(app: Express): void {
       const workspaceId = searchRequest.workspace_id || searchRequest.workspaceId;
 
       if (!searchRequest.query || typeof searchRequest.query !== 'string') {
-        res.status(400).json({ error: 'Query is required and must be a string' });
+        sendApiError(res, 400, 'BAD_REQUEST', 'Query is required and must be a string');
         return;
       }
 
-      // Dates are passed as strings to the search service
       const results = await searchService.search({
         query: searchRequest.query,
         workspaceId,
@@ -41,7 +50,7 @@ export function registerSearchRoutes(app: Express): void {
         offset: searchRequest.offset || 0,
         filters: searchRequest.filters,
         hybrid: searchRequest.hybrid !== false,
-        vectorWeight: searchRequest.vectorWeight
+        vectorWeight: searchRequest.vectorWeight,
       });
 
       const duration = Date.now() - startTime;
@@ -53,24 +62,20 @@ export function registerSearchRoutes(app: Express): void {
         query: searchRequest.query,
         duration,
         limit: searchRequest.limit || 20,
-        offset: searchRequest.offset || 0
+        offset: searchRequest.offset || 0,
       });
     } catch (error) {
       const duration = Date.now() - startTime;
       observability.error('Search failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
         query: req.body?.query,
-        duration
+        duration,
       });
 
-      res.status(500).json({
-        error: 'Search failed',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      });
+      sendApiError(res, 500, 'INVALID_STATE', 'Search failed', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // Search suggestions endpoint
   app.get('/api/v1/search/suggestions', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     try {
       const { q: query, workspace_id, workspaceId, limit = 5 } = req.query;
@@ -79,53 +84,50 @@ export function registerSearchRoutes(app: Express): void {
         (typeof workspaceId === 'string' ? workspaceId : undefined);
 
       if (!query || typeof query !== 'string') {
-        res.status(400).json({ error: 'Query parameter "q" is required' });
+        sendApiError(res, 400, 'BAD_REQUEST', 'Query parameter "q" is required');
         return;
       }
 
       const suggestions = await searchService.getSuggestions(
         query,
-        resolvedWorkspaceId as string,
-        parseInt(limit as string)
+        resolvedWorkspaceId,
+        parseInt(limit as string, 10)
       );
 
       res.json({ suggestions });
     } catch (error) {
       observability.error('Search suggestions failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
-        query: req.query.q
+        query: req.query.q,
       });
 
-      res.status(500).json({
-        error: 'Failed to get suggestions',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      });
+      sendApiError(res, 500, 'INVALID_STATE', 'Failed to get suggestions', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // Reindex document endpoint
   app.post('/api/v1/search/reindex/:documentId', authMiddleware, checkPermission('workspace:admin', 'document'), async (req: Request, res: Response) => {
     try {
       const { documentId } = req.params;
+      const document = await DocumentModel.findById(documentId);
+      if (!document) {
+        sendApiError(res, 404, 'NOT_FOUND', 'Document not found');
+        return;
+      }
 
-      await searchService.reindexDocument(documentId);
+      await searchService.enqueueDocumentReindex(documentId, document.workspace_id);
 
       observability.info('Document reindexed', { documentId });
       res.json({ message: 'Document reindexed successfully', documentId });
     } catch (error) {
       observability.error('Document reindex failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
-        documentId: req.params.documentId
+        documentId: req.params.documentId,
       });
 
-      res.status(500).json({
-        error: 'Failed to reindex document',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      });
+      sendApiError(res, 500, 'INDEXING_FAILED', 'Document indexing failed', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // Advanced search with filters
   app.post('/api/v1/search/advanced', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
@@ -138,40 +140,33 @@ export function registerSearchRoutes(app: Express): void {
         limit = 20,
         offset = 0,
         sortBy = 'relevance',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
       } = req.body;
 
       const resolvedWorkspaceId = workspace_id || workspaceId;
-
       if (!query) {
-        res.status(400).json({ error: 'Query is required' });
+        sendApiError(res, 400, 'BAD_REQUEST', 'Query is required');
         return;
       }
 
-      // Enhanced search with additional options
-      const searchOptions = {
+      const results = await searchService.search({
         query,
         workspaceId: resolvedWorkspaceId,
         limit,
         offset,
         filters: {
           ...filters,
-          // Dates are passed as strings to the search service
           dateFrom: filters.dateFrom,
-          dateTo: filters.dateTo
+          dateTo: filters.dateTo,
         },
         hybrid: true,
-        vectorWeight: 0.5
-      };
+        vectorWeight: 0.5,
+      });
 
-      const results = await searchService.search(searchOptions);
-
-      // Apply additional sorting if needed
       let sortedResults = results.results;
       if (sortBy !== 'relevance') {
-        sortedResults.sort((a, b) => {
+        sortedResults = [...results.results].sort((a, b) => {
           let comparison = 0;
-
           switch (sortBy) {
             case 'date':
               comparison = a.created_at.getTime() - b.created_at.getTime();
@@ -182,7 +177,6 @@ export function registerSearchRoutes(app: Express): void {
             default:
               comparison = a.score - b.score;
           }
-
           return sortOrder === 'desc' ? -comparison : comparison;
         });
       }
@@ -199,60 +193,32 @@ export function registerSearchRoutes(app: Express): void {
         sortOrder,
         duration,
         limit,
-        offset
+        offset,
       });
     } catch (error) {
       const duration = Date.now() - startTime;
       observability.error('Advanced search failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
         query: req.body?.query,
-        duration
+        duration,
       });
 
-      res.status(500).json({
-        error: 'Advanced search failed',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      });
+      sendApiError(res, 500, 'INVALID_STATE', 'Advanced search failed', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // ── GET /api/v1/search/index-status ─────────────────────────────────────
   app.get('/api/v1/search/index-status', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
-    const workspaceId = (req as any).workspaceId ?? req.query.workspace_id as string;
-    if (!workspaceId) return res.status(400).json({ error: 'workspace_id required' });
+    const workspaceId = ((req as any).workspaceId ?? req.query.workspace_id) as string | undefined;
+    if (!workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'workspace_id required');
+      return;
+    }
+
     try {
-      const { pool } = await import('../db/client.js');
-      if (!pool) return res.status(503).json({ error: 'DB unavailable' });
-
-      const [docCount, blockCount, vecCount] = await Promise.all([
-        pool.query<{ count: string }>(
-          `SELECT COUNT(DISTINCT document_id) AS count FROM search_index WHERE workspace_id = $1`, [workspaceId]
-        ),
-        pool.query<{ count: string }>(
-          `SELECT COUNT(*) AS count FROM search_index WHERE workspace_id = $1`, [workspaceId]
-        ),
-        pool.query<{ count: string }>(
-          `SELECT COUNT(*) AS count FROM search_index WHERE workspace_id = $1 AND embedding IS NOT NULL`, [workspaceId]
-        ),
-      ]);
-
-      const totalDocs = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM documents WHERE workspace_id = $1`, [workspaceId]
-      );
-
-      const indexed = parseInt(docCount.rows[0]?.count ?? '0');
-      const total   = parseInt(totalDocs.rows[0]?.count  ?? '0');
-
-      res.json({
-        indexed_documents: indexed,
-        total_documents: total,
-        indexed_blocks: parseInt(blockCount.rows[0]?.count ?? '0'),
-        vector_indexed_blocks: parseInt(vecCount.rows[0]?.count ?? '0'),
-        coverage: total > 0 ? Math.round((indexed / total) * 100) : 0,
-        status: indexed === 0 ? 'empty' : indexed < total ? 'partial' : 'complete',
-      });
+      const summary = await searchService.getIndexStatusSummary(workspaceId);
+      res.json(summary);
     } catch (error) {
-      res.status(500).json({ error: 'Failed to get index status' });
+      sendApiError(res, 500, 'INVALID_STATE', 'Failed to get index status', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 }

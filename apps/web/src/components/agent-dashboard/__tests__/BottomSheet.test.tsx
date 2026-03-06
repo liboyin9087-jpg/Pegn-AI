@@ -32,7 +32,7 @@ describe('BottomSheet', () => {
             </BottomSheet>
         );
 
-        const closeBtn = screen.getByLabelText('Close');
+        const closeBtn = screen.getByLabelText('關閉');
         fireEvent.click(closeBtn);
         expect(handleClose).toHaveBeenCalledTimes(1);
     });

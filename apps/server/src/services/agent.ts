@@ -412,9 +412,10 @@ async function retrieveOrSpawn(
         .map(r => r.value);
 
       // Merge sub-results: combine answers into a single context blob
-      const mergedAnswer = results.map(r => r.answer).filter(Boolean).join('
-
-');
+      const mergedAnswer = results
+        .map(r => r.answer)
+        .filter(Boolean)
+        .join('\n\n');
       const mergedSources = results.flatMap(r => r.sources ?? []);
 
       await pool!.query(
@@ -640,4 +641,3 @@ export async function recoverRunningRunsOnBoot(): Promise<number> {
 
   return runIds.length;
 }
-

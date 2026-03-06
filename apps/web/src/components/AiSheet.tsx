@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, MessageSquare, Search, Bot, GitFork, Zap } from 'lucide-react';
+import { X, MessageSquare, Search, Bot, GitFork, Zap, Sparkles } from 'lucide-react';
 import GraphRAGChat from './GraphRAGChat';
 import SearchPanel from './SearchPanel';
 import AgentPanel from './AgentPanel';

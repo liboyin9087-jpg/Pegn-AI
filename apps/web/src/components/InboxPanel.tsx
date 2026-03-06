@@ -25,6 +25,31 @@ function formatTime(iso: string): string {
   });
 }
 
+function getNotificationMeta(notification: InboxNotification): { title: string; body: string } {
+  switch (notification.type) {
+    case 'mention':
+      return {
+        title: '提及你於留言串',
+        body: notification.payload.preview || '查看留言內容',
+      };
+    case 'quota_alert':
+      return {
+        title: notification.payload.title || 'Quota 警告',
+        body: notification.payload.message,
+      };
+    case 'automation':
+      return {
+        title: notification.payload.title || 'Automation',
+        body: notification.payload.message,
+      };
+    case 'unknown':
+      return {
+        title: notification.payload.title || '系統通知',
+        body: notification.payload.message || '收到未識別的通知。',
+      };
+  }
+}
+
 export default function InboxPanel({
   open,
   loading,
@@ -66,9 +91,9 @@ export default function InboxPanel({
                   disabled={unreadCount === 0}
                 >
                   <CheckCheck size={12} />
-                  全部已讀
+                  全部標記已讀
                 </button>
-                <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">✕</button>
+                <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">關閉</button>
               </div>
             </div>
 
@@ -79,48 +104,51 @@ export default function InboxPanel({
                 <div className="p-8 text-center text-sm text-text-tertiary">目前沒有通知</div>
               ) : (
                 <div className="divide-y divide-border">
-                  {notifications.map((notification) => (
-                    <div
-                      key={notification.id}
-                      onClick={() => onOpenNotification(notification)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          onOpenNotification(notification);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      className="w-full text-left px-5 py-4 hover:bg-surface-secondary transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className="mt-1 w-2 h-2 rounded-full flex-shrink-0"
-                          style={{ background: notification.status === 'unread' ? 'var(--color-accent)' : 'transparent' }}
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm text-text-primary font-medium">提及你於留言串</p>
-                            <span className="text-[11px] text-text-quaternary">{formatTime(notification.created_at)}</span>
+                  {notifications.map((notification) => {
+                    const meta = getNotificationMeta(notification);
+                    return (
+                      <div
+                        key={notification.id}
+                        onClick={() => onOpenNotification(notification)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onOpenNotification(notification);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        className="w-full text-left px-5 py-4 hover:bg-surface-secondary transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="mt-1 w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ background: notification.status === 'unread' ? 'var(--color-accent)' : 'transparent' }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm text-text-primary font-medium">{meta.title}</p>
+                              <span className="text-[11px] text-text-quaternary">{formatTime(notification.created_at)}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-text-secondary line-clamp-2">
+                              {meta.body}
+                            </p>
                           </div>
-                          <p className="mt-1 text-xs text-text-secondary line-clamp-2">
-                            {notification.payload?.preview || '查看留言內容'}
-                          </p>
+                          {notification.status === 'unread' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onMarkRead(notification.id);
+                              }}
+                              className="text-[11px] px-2 py-1 rounded-md border border-border text-text-secondary hover:bg-surface"
+                            >
+                              標記已讀
+                            </button>
+                          )}
                         </div>
-                        {notification.status === 'unread' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onMarkRead(notification.id);
-                            }}
-                            className="text-[11px] px-2 py-1 rounded-md border border-border text-text-secondary hover:bg-surface"
-                          >
-                            已讀
-                          </button>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

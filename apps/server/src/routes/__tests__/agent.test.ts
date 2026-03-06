@@ -182,7 +182,6 @@ describe('GET /api/v1/agents/runs/:run_id/tree', () => {
     allowMember('user-t', 'ws-t');
 
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ ok: 1 }] })          // workspace_members
       .mockResolvedValueOnce({ rows: [{ root_id: 'root-1' }] }) // resolve root
       .mockResolvedValueOnce({  // recursive CTE
         rows: [

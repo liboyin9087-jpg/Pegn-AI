@@ -111,6 +111,34 @@ export interface QueuedMutationResult<T> {
 }
 export type QueueMutationResult<T> = QueuedMutationResult<T>;
 
+export type ApiErrorCode =
+  | 'BAD_REQUEST'
+  | 'NOT_FOUND'
+  | 'FORBIDDEN'
+  | 'INDEXING_FAILED'
+  | 'INVALID_STATE';
+
+export interface ApiErrorShape {
+  error: {
+    code: ApiErrorCode;
+    message: string;
+    details?: unknown;
+  };
+}
+
+export type DocumentIndexStatus = 'pending' | 'indexed' | 'stale' | 'failed';
+
+export interface SearchIndexStatusSummary {
+  totalDocuments: number;
+  pendingDocuments: number;
+  indexedDocuments: number;
+  staleDocuments: number;
+  failedDocuments: number;
+  lastIndexedAt?: string | null;
+}
+
+export type SearchIndexStatusResponse = SearchIndexStatusSummary;
+
 export type { OfflineQueueItem };
 
 export type OfflineQueueMetricsSource = 'bootstrap' | 'queue_changed' | 'online' | 'interval';
@@ -270,14 +298,7 @@ export const search = (query: string, wsId: string, limit = 10, hybrid = true) =
   });
 
 export const getSearchIndexStatus = (wsId: string) =>
-  api<{
-    indexed_documents: number;
-    total_documents: number;
-    indexed_blocks: number;
-    vector_indexed_blocks: number;
-    coverage: number;
-    status: 'empty' | 'partial' | 'complete';
-  }>(`/search/index-status?workspace_id=${wsId}`);
+  api<SearchIndexStatusResponse>(`/search/index-status?workspace_id=${wsId}`);
 
 export const knowledgeQuery = (query: string, wsId: string, mode: 'auto' | 'hybrid' | 'graph' = 'auto') =>
   api<{
@@ -414,22 +435,135 @@ export interface CommentThread {
   sync_status?: 'synced' | 'queued' | 'failed';
 }
 
-export interface InboxNotification {
+type InboxNotificationBase = {
   id: string;
   workspace_id: string;
   user_id: string;
-  type: 'mention';
-  payload: {
-    workspace_id: string;
-    document_id: string;
-    thread_id: string;
-    comment_id: string;
-    mentioned_by: string;
-    preview?: string;
-  };
   status: 'unread' | 'read';
   read_at?: string | null;
   created_at: string;
+};
+
+export type InboxNotification =
+  | (InboxNotificationBase & {
+      type: 'mention';
+      payload: {
+        workspace_id: string;
+        document_id: string;
+        thread_id: string;
+        comment_id: string;
+        mentioned_by: string;
+        preview?: string;
+      };
+    })
+  | (InboxNotificationBase & {
+      type: 'quota_alert';
+      payload: {
+        title: string;
+        message: string;
+        resource_type: string;
+        used: number;
+        limit: number;
+        period: string;
+        threshold_pct: number;
+      };
+    })
+  | (InboxNotificationBase & {
+      type: 'automation';
+      payload: {
+        title: string;
+        message: string;
+        entity_type?: string;
+        entity_id?: string;
+        context?: Record<string, unknown>;
+      };
+    })
+  | (InboxNotificationBase & {
+      type: 'unknown';
+      payload: {
+        title: string;
+        message: string;
+        raw_type?: string;
+      };
+    });
+
+interface RawInboxNotification extends InboxNotificationBase {
+  type: string;
+  payload?: Record<string, unknown> | null;
+}
+
+function toSafeString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function toSafeNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function normalizeInboxNotification(notification: RawInboxNotification): InboxNotification {
+  const base = {
+    id: notification.id,
+    workspace_id: notification.workspace_id,
+    user_id: notification.user_id,
+    status: notification.status,
+    read_at: notification.read_at ?? null,
+    created_at: notification.created_at,
+  } satisfies InboxNotificationBase;
+
+  const payload = notification.payload ?? {};
+  switch (notification.type) {
+    case 'mention':
+      return {
+        ...base,
+        type: 'mention',
+        payload: {
+          workspace_id: toSafeString(payload.workspace_id),
+          document_id: toSafeString(payload.document_id),
+          thread_id: toSafeString(payload.thread_id),
+          comment_id: toSafeString(payload.comment_id),
+          mentioned_by: toSafeString(payload.mentioned_by),
+          ...(typeof payload.preview === 'string' ? { preview: payload.preview } : {}),
+        },
+      };
+    case 'quota_alert':
+      return {
+        ...base,
+        type: 'quota_alert',
+        payload: {
+          title: toSafeString(payload.title, 'Quota 警告'),
+          message: toSafeString(payload.message, 'Quota 用量已達警戒值。'),
+          resource_type: toSafeString(payload.resource_type),
+          used: toSafeNumber(payload.used),
+          limit: toSafeNumber(payload.limit),
+          period: toSafeString(payload.period),
+          threshold_pct: toSafeNumber(payload.threshold_pct),
+        },
+      };
+    case 'automation':
+      return {
+        ...base,
+        type: 'automation',
+        payload: {
+          title: toSafeString(payload.title, 'Automation'),
+          message: toSafeString(payload.message, 'An automation was triggered.'),
+          ...(typeof payload.entity_type === 'string' ? { entity_type: payload.entity_type } : {}),
+          ...(typeof payload.entity_id === 'string' ? { entity_id: payload.entity_id } : {}),
+          ...(payload.context && typeof payload.context === 'object'
+            ? { context: payload.context as Record<string, unknown> }
+            : {}),
+        },
+      };
+    default:
+      return {
+        ...base,
+        type: 'unknown',
+        payload: {
+          title: toSafeString(payload.title, '系統通知'),
+          message: toSafeString(payload.message, '收到未識別的通知。'),
+          raw_type: notification.type,
+        },
+      };
+  }
 }
 
 export const listCommentThreads = (documentId: string, status: 'open' | 'resolved' | 'all' = 'open') =>
@@ -514,14 +648,21 @@ export const reopenCommentThreadQueued = (threadId: string) =>
     body: {},
   });
 
-export const listInboxNotifications = (status: 'unread' | 'all' = 'unread') =>
-  api<{ notifications: InboxNotification[]; unread_count: number }>(`/inbox/notifications?status=${status}`);
+export const listInboxNotifications = async (status: 'unread' | 'all' = 'unread') => {
+  const response = await api<{ notifications: RawInboxNotification[]; unread_count: number }>(`/inbox/notifications?status=${status}`);
+  return {
+    notifications: response.notifications.map(normalizeInboxNotification),
+    unread_count: response.unread_count,
+  };
+};
 
-export const markInboxNotificationRead = (notificationId: string) =>
-  api<{ notification: InboxNotification }>(`/inbox/notifications/${notificationId}/read`, {
+export const markInboxNotificationRead = async (notificationId: string) => {
+  const response = await api<{ notification: RawInboxNotification }>(`/inbox/notifications/${notificationId}/read`, {
     method: 'PATCH',
     body: JSON.stringify({}),
   });
+  return { notification: normalizeInboxNotification(response.notification) };
+};
 
 export const markAllInboxNotificationsRead = () =>
   api<{ updated: number }>(`/inbox/notifications/read_all`, {
@@ -567,12 +708,17 @@ export const exportCollection = async (id: string, format: 'csv' | 'json' = 'csv
 };
 
 // ── SSE helpers ──────────────────────────────────────────────
-export function sseStream(path: string, onData: (d: any) => void, onDone: () => void) {
+export function sseStream(
+  path: string,
+  onData: (d: any) => void,
+  onDone: () => void,
+  onError?: () => void
+) {
   const token = getToken();
   const url = `${import.meta.env.VITE_API_URL ?? 'http://localhost:4000'}${path}${token ? `?token=${token}` : ''}`;
   const es = new EventSource(url);
   es.onmessage = (e) => { try { onData(JSON.parse(e.data)); } catch { } };
   es.addEventListener('done', () => { onDone(); es.close(); });
-  es.onerror = () => es.close();
+  es.onerror = () => { onError?.(); es.close(); };
   return () => es.close();
 }

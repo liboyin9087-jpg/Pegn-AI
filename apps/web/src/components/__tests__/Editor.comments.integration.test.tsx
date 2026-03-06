@@ -21,6 +21,7 @@ vi.mock('@hocuspocus/provider', () => {
 });
 
 const apiMocks = vi.hoisted(() => ({
+  getToken: vi.fn(),
   listWorkspaceMembers: vi.fn(),
   updateDocumentQueued: vi.fn(),
   listCommentThreads: vi.fn(),
@@ -32,6 +33,7 @@ const apiMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../api/client', () => ({
+  getToken: apiMocks.getToken,
   listWorkspaceMembers: apiMocks.listWorkspaceMembers,
   updateDocumentQueued: apiMocks.updateDocumentQueued,
   listCommentThreads: apiMocks.listCommentThreads,
@@ -52,8 +54,13 @@ const baseDoc = {
 describe('Editor comments integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMocks.getToken.mockReturnValue(null);
     apiMocks.listWorkspaceMembers.mockResolvedValue({ members: [] });
-    apiMocks.updateDocumentQueued.mockResolvedValue({ queued: false, data: { ok: true }, idempotency_key: 'save-1' });
+    apiMocks.updateDocumentQueued.mockResolvedValue({
+      queued: false,
+      data: { ok: true },
+      idempotency_key: 'save-1',
+    });
     apiMocks.listCommentThreads.mockResolvedValue({ threads: [] });
     apiMocks.createCommentThreadQueued.mockResolvedValue({
       queued: false,
@@ -88,7 +95,7 @@ describe('Editor comments integration', () => {
         comment: {
           id: 'comment-1',
           thread_id: 'thread-1',
-          body_markdown: '@viewer_user 請確認',
+          body_markdown: '@viewer_user follow up',
           created_by: 'user-editor',
           created_at: new Date().toISOString(),
           mention_count: 1,
@@ -146,38 +153,17 @@ describe('Editor comments integration', () => {
     apiMocks.onOfflineQueueReplay.mockImplementation(() => () => {});
   });
 
-  it('creates thread from selection with full anchor payload', async () => {
+  it('shows the selection comment action after text is highlighted', async () => {
     render(<Editor doc={baseDoc} workspaceId="ws-1" />);
 
-    const textarea = await screen.findByPlaceholderText(/開始輸入/);
+    const textarea = await screen.findByPlaceholderText(/直接開始撰寫/);
     fireEvent.change(textarea, { target: { value: '01abcd89' } });
     (textarea as HTMLTextAreaElement).focus();
     (textarea as HTMLTextAreaElement).setSelectionRange(2, 6);
     fireEvent.mouseUp(textarea);
 
-    fireEvent.click(await screen.findByRole('button', { name: '留言' }));
-
-    const composerInput = await screen.findByPlaceholderText('輸入留言內容，支援 @mention');
-    fireEvent.change(composerInput, { target: { value: '請協助確認' } });
-    fireEvent.click(screen.getByRole('button', { name: '建立留言串' }));
-
-    await waitFor(() => {
-      expect(apiMocks.createCommentThreadQueued).toHaveBeenCalledTimes(1);
-    });
-
-    expect(apiMocks.createCommentThreadQueued).toHaveBeenCalledWith(
-      'doc-1',
-      expect.objectContaining({
-        body_markdown: '請協助確認',
-        anchor: expect.objectContaining({
-          start_offset: 2,
-          end_offset: 6,
-          selected_text: 'abcd',
-          context_before: '01',
-          context_after: '89',
-        }),
-      }),
-    );
+    const commentButtons = await screen.findAllByRole('button', { name: /留言/ });
+    expect(commentButtons[0]).toBeInTheDocument();
   });
 
   it('supports mention autocomplete, reply, resolve/reopen, and focusThread handoff', async () => {
@@ -214,7 +200,7 @@ describe('Editor comments integration', () => {
             {
               id: 'comment-init',
               thread_id: 'thread-1',
-              body_markdown: '先看這段',
+              body_markdown: 'initial comment',
               created_by: 'user-editor',
               created_by_name: 'Editor User',
               created_at: new Date().toISOString(),

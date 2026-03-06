@@ -8,7 +8,7 @@ export function registerAuthRoutes(app: Express): void {
   // POST /api/v1/auth/register
   app.post('/api/v1/auth/register', async (req: Request, res: Response) => {
     const { email, password, name } = req.body;
-
+    ``
     if (!email || !password || !name) {
       res.status(400).json({ error: 'email, password and name are required' });
       return;

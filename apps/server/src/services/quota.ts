@@ -1,9 +1,9 @@
 import { pool } from '../db/client.js';
+import { listWorkspaceAdmins } from '../lib/workspaceRoles.js';
 import { observability } from './observability.js';
 
 export type ResourceType = 'ai_tokens' | 'ai_calls' | 'agent_runs';
 
-/** P2-2: Estimated LLM cost in USD per 1,000 tokens. Override via TOKEN_COST_USD_PER_1K env var. */
 const TOKEN_COST_USD_PER_1K = parseFloat(process.env.TOKEN_COST_USD_PER_1K ?? '0.01');
 
 export function tokensToUSD(tokens: number): number {
@@ -11,22 +11,18 @@ export function tokensToUSD(tokens: number): number {
 }
 
 function dayPeriod(): string {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return new Date().toISOString().slice(0, 10);
 }
 
 function monthPeriod(): string {
-  return new Date().toISOString().slice(0, 7); // YYYY-MM
+  return new Date().toISOString().slice(0, 7);
 }
 
 function periodForResource(type: ResourceType): string {
   return type === 'ai_tokens' ? monthPeriod() : dayPeriod();
 }
 
-/**
- * P2-2: Send an inbox notification to all workspace admins when a quota threshold is crossed.
- * Only fires once per threshold per period (idempotent guard via system_metrics name).
- */
-async function notifyQuotaAlert(
+export async function notifyQuotaAlert(
   workspaceId: string,
   type: ResourceType,
   thresholdPct: number,
@@ -36,8 +32,8 @@ async function notifyQuotaAlert(
 ): Promise<void> {
   const p = pool;
   if (!p) return;
+
   try {
-    // Idempotency: skip if we already alerted for this threshold in this period
     const flagKey = `quota_alert_${type}_${thresholdPct}_${period}`;
     const alreadySent = await p.query(
       `SELECT 1 FROM system_metrics WHERE workspace_id = $1 AND name = $2 LIMIT 1`,
@@ -45,37 +41,44 @@ async function notifyQuotaAlert(
     );
     if ((alreadySent.rowCount ?? 0) > 0) return;
 
-    // Mark as sent
+    const adminIds = await listWorkspaceAdmins(workspaceId);
+    if (adminIds.length === 0) return;
+
+    const label = thresholdPct >= 100 ? '已達上限' : `已達 ${thresholdPct}%`;
+    const message = `Quota 警告：${type} 用量${label}（${used}/${limit}，週期 ${period}）`;
+    const payload = {
+      title: 'Quota 警告',
+      message,
+      resource_type: type,
+      used,
+      limit,
+      period,
+      threshold_pct: thresholdPct,
+    };
+
+    for (const userId of adminIds) {
+      await p.query(
+        `INSERT INTO inbox_notifications (user_id, workspace_id, type, payload, status)
+         VALUES ($1, $2, 'quota_alert', $3::jsonb, 'unread')
+         ON CONFLICT DO NOTHING`,
+        [userId, workspaceId, JSON.stringify(payload)]
+      );
+    }
+
     await p.query(
       `INSERT INTO system_metrics (workspace_id, name, value) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
       [workspaceId, flagKey, used]
     );
 
-    // Find workspace admins
-    const admins = await p.query(
-      `SELECT wm.user_id
-       FROM workspace_members wm
-       JOIN user_roles ur ON ur.user_id = wm.user_id
-       JOIN roles r ON r.id = ur.role_id
-       WHERE wm.workspace_id = $1 AND r.name = 'admin'
-       LIMIT 20`,
-      [workspaceId]
-    );
-    if ((admins.rowCount ?? 0) === 0) return;
-
-    const label = thresholdPct >= 100 ? '已達到上限' : `已達 ${thresholdPct}%`;
-    const message = `⚠️ Quota 警告：${type} 用量${label}（${used}/${limit}，週期 ${period}）`;
-
-    for (const row of admins.rows) {
-      await p.query(
-        `INSERT INTO inbox_notifications (user_id, workspace_id, type, title, content, is_read)
-         VALUES ($1, $2, 'quota_alert', $3, $4, false)
-         ON CONFLICT DO NOTHING`,
-        [row.user_id, workspaceId, 'Quota 警告', message]
-      );
-    }
-    observability.warn('Quota threshold alert sent', { workspaceId, type, thresholdPct, used, limit, period });
+    observability.warn('Quota threshold alert sent', {
+      workspaceId,
+      type,
+      thresholdPct,
+      used,
+      limit,
+      period,
+    });
   } catch (err) {
     observability.warn('Failed to send quota alert', { workspaceId, type, err });
   }
@@ -93,6 +96,7 @@ export async function recordUsage(
 
   const period = periodForResource(type);
   const cost = costUsd ?? (type === 'ai_tokens' ? tokensToUSD(amount) : 0);
+
   try {
     await p.query(
       `INSERT INTO usage_records (workspace_id, user_id, resource_type, period, amount, cost_usd)
@@ -104,7 +108,6 @@ export async function recordUsage(
       [workspaceId, userId ?? null, type, period, amount, cost]
     );
 
-    // P2-2: Check thresholds after recording usage (fire-and-forget)
     void (async () => {
       const quota = await checkQuota(workspaceId, type);
       const pct = quota.limit > 0 ? (quota.used / quota.limit) * 100 : 0;
@@ -125,7 +128,6 @@ export async function checkQuota(
   if (!p) return { allowed: true, used: 0, limit: Infinity, remaining: Infinity };
 
   try {
-    // Get workspace quota limits (creates defaults if not exists)
     await p.query(
       `INSERT INTO quota_limits (workspace_id)
        VALUES ($1)
@@ -155,11 +157,11 @@ export async function checkQuota(
        WHERE workspace_id = $1 AND resource_type = $2 AND period = $3`,
       [workspaceId, type, period]
     );
+
     const used = parseInt(usageRes.rows[0]?.amount ?? '0', 10);
     const usedCostUsd = parseFloat(usageRes.rows[0]?.cost_usd ?? '0');
     const remaining = Math.max(0, limit - used);
 
-    // P2-2: Block if cost ceiling exceeded
     if (costUsdCeiling !== null && usedCostUsd >= costUsdCeiling) {
       return { allowed: false, used, limit, remaining };
     }
@@ -190,10 +192,20 @@ export async function getWorkspaceUsage(workspaceId: string): Promise<{
     [workspaceId]
   );
 
-  const row = limitsRes.rows[0] ?? { plan: 'free', ai_tokens_per_month: 100000, ai_calls_per_day: 200, agent_runs_per_day: 20, cost_usd_ceiling: null };
+  const row = limitsRes.rows[0] ?? {
+    plan: 'free',
+    ai_tokens_per_month: 100000,
+    ai_calls_per_day: 200,
+    agent_runs_per_day: 20,
+    cost_usd_ceiling: null,
+  };
 
   const resources: ResourceType[] = ['ai_tokens', 'ai_calls', 'agent_runs'];
-  const quotas: any = {};
+  const quotas: Record<ResourceType, { limit: number; used: number; remaining: number; period: string; cost_usd: number }> = {
+    ai_tokens: { limit: 0, used: 0, remaining: 0, period: '', cost_usd: 0 },
+    ai_calls: { limit: 0, used: 0, remaining: 0, period: '', cost_usd: 0 },
+    agent_runs: { limit: 0, used: 0, remaining: 0, period: '', cost_usd: 0 },
+  };
 
   for (const type of resources) {
     const period = periodForResource(type);
@@ -217,9 +229,6 @@ export async function getWorkspaceUsage(workspaceId: string): Promise<{
   return { plan: row.plan, quotas, cost_usd_ceiling: row.cost_usd_ceiling ?? null };
 }
 
-/**
- * P2-2: Admin endpoint — update quota limits for a workspace.
- */
 export async function updateQuotaLimits(
   workspaceId: string,
   patch: Partial<{
@@ -233,13 +242,25 @@ export async function updateQuotaLimits(
   if (!p) throw new Error('Database not available');
 
   const fields: string[] = [];
-  const values: any[] = [workspaceId];
+  const values: unknown[] = [workspaceId];
   let idx = 2;
 
-  if (patch.ai_tokens_per_month !== undefined) { fields.push(`ai_tokens_per_month = $${idx++}`); values.push(patch.ai_tokens_per_month); }
-  if (patch.ai_calls_per_day !== undefined) { fields.push(`ai_calls_per_day = $${idx++}`); values.push(patch.ai_calls_per_day); }
-  if (patch.agent_runs_per_day !== undefined) { fields.push(`agent_runs_per_day = $${idx++}`); values.push(patch.agent_runs_per_day); }
-  if ('cost_usd_ceiling' in patch) { fields.push(`cost_usd_ceiling = $${idx++}`); values.push(patch.cost_usd_ceiling); }
+  if (patch.ai_tokens_per_month !== undefined) {
+    fields.push(`ai_tokens_per_month = $${idx++}`);
+    values.push(patch.ai_tokens_per_month);
+  }
+  if (patch.ai_calls_per_day !== undefined) {
+    fields.push(`ai_calls_per_day = $${idx++}`);
+    values.push(patch.ai_calls_per_day);
+  }
+  if (patch.agent_runs_per_day !== undefined) {
+    fields.push(`agent_runs_per_day = $${idx++}`);
+    values.push(patch.agent_runs_per_day);
+  }
+  if ('cost_usd_ceiling' in patch) {
+    fields.push(`cost_usd_ceiling = $${idx++}`);
+    values.push(patch.cost_usd_ceiling);
+  }
 
   if (fields.length === 0) return;
 
@@ -249,6 +270,7 @@ export async function updateQuotaLimits(
      ON CONFLICT (workspace_id) DO NOTHING`,
     [workspaceId]
   );
+
   await p.query(
     `UPDATE quota_limits SET ${fields.join(', ')}, updated_at = NOW() WHERE workspace_id = $1`,
     values

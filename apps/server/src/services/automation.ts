@@ -181,6 +181,15 @@ async function executeNotify(config: Record<string, unknown>, context: Record<st
   const workspaceId = context.workspaceId as string;
   const message = (config.message as string) || 'An automation was triggered.';
   const title = (config.title as string) || 'Automation';
+  const entityType = context.entityType as string | undefined;
+  const entityId = context.entityId as string | undefined;
+  const payload = {
+    title,
+    message,
+    ...(entityType ? { entity_type: entityType } : {}),
+    ...(entityId ? { entity_id: entityId } : {}),
+    context,
+  };
 
   // Notify all workspace members
   const members = await p.query(
@@ -193,9 +202,9 @@ async function executeNotify(config: Record<string, unknown>, context: Record<st
     inserts.push(
       p.query(
         `INSERT INTO inbox_notifications
-           (user_id, workspace_id, type, title, body, metadata, read)
-         VALUES ($1, $2, 'automation', $3, $4, $5, false)`,
-        [row.user_id, workspaceId, title, message, JSON.stringify(context)]
+           (user_id, workspace_id, type, payload, status)
+         VALUES ($1, $2, 'automation', $3::jsonb, 'unread')`,
+        [row.user_id, workspaceId, JSON.stringify(payload)]
       ).catch(() => { /* non-fatal */ })
     );
   }
