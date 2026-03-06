@@ -117,7 +117,7 @@ steps:
       - --timeout=300
       - --concurrency=80
       - --port=4000
-      - --set-secrets=DATABASE_URL=DATABASE_URL_PROD:latest,JWT_SECRET=JWT_SECRET_PROD:latest,GEMINI_API_KEY=GEMINI_API_KEY_PROD:latest,OPENAI_API_KEY=OPENAI_API_KEY_PROD:latest
+      - --set-secrets=DATABASE_URL=DATABASE_URL_PROD:latest,JWT_SECRET=JWT_SECRET_PROD:latest,GEMINI_API_KEY=GEMINI_API_KEY_PROD:latest,OPENAI_API_KEY=OPENAI_API_KEY_PROD:latest,REDIS_URL=REDIS_URL_PROD:latest
       - --set-env-vars=NODE_ENV=production,OTEL_SERVICE_NAME=pegn-ai-server
     waitFor: ['push-api']
 

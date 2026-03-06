@@ -14,7 +14,8 @@
 #   REGION            GCP region (default: asia-east1)
 #   AR_REPO           Artifact Registry repo name (default: pegn-artifacts)
 #   BILLING_ACCOUNT   GCP billing account ID (if project needs linking)
-#   GEMINI_API_KEY    Gemini API key
+#   REDIS_URL         Upstash Redis URL (rediss://...)
+#   GEMINI_API_KEY    Gemini / Google AI API key
 #   OPENAI_API_KEY    OpenAI API key (optional)
 #   ANTHROPIC_API_KEY Anthropic API key (optional)
 
@@ -106,6 +107,9 @@ upsert_secret "DATABASE_URL_${UPPER_ENV}"    "$NEON_DATABASE_URL"
 upsert_secret "JWT_SECRET_${UPPER_ENV}"      "$JWT_SECRET"
 upsert_secret "SESSION_SECRET_${UPPER_ENV}"  "$JWT_SECRET"   # reuse JWT secret if not set separately
 
+if [[ -n "${REDIS_URL:-}" ]]; then
+  upsert_secret "REDIS_URL_${UPPER_ENV}" "$REDIS_URL"
+fi
 if [[ -n "${GEMINI_API_KEY:-}" ]]; then
   upsert_secret "GEMINI_API_KEY_${UPPER_ENV}" "$GEMINI_API_KEY"
 fi
