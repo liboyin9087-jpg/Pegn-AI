@@ -2,7 +2,7 @@ import type { Express, Response } from 'express';
 import { BlockModel } from '../models/block.js';
 import { DocumentModel } from '../models/document.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { checkPermission } from '../middleware/rbac.js';
+import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { emitAutomationEvent } from '../services/automation.js';
 import {
   getIdempotencyKeyFromRequest,
@@ -23,7 +23,7 @@ function sendApiError(res: Response, status: number, code: string, message: stri
 }
 
 export function registerDocumentRoutes(app: Express): void {
-  app.post('/api/v1/documents', authMiddleware, checkPermission('collection:edit'), async (req: AuthRequest, res: Response) => {
+  app.post('/api/v1/documents', authMiddleware, checkWorkspaceCapability('canEditDocuments'), async (req: AuthRequest, res: Response) => {
     try {
       const workspaceId = req.body?.workspace_id || req.body?.workspaceId;
       const { title, content, yjs_state, metadata, collection_id, properties } = req.body;
@@ -68,7 +68,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/v1/documents/:id', authMiddleware, checkPermission('collection:view', 'document'), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/documents/:id', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const document = await DocumentModel.findById(req.params.id);
       if (!document) {
@@ -85,7 +85,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/v1/workspaces/:workspaceId/documents', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/workspaces/:workspaceId/documents', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     try {
       const { workspaceId } = req.params;
       const { limit = 50, offset = 0 } = req.query;
@@ -100,7 +100,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.put('/api/v1/documents/:id', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
+  app.put('/api/v1/documents/:id', authMiddleware, checkWorkspaceCapability('canEditDocuments', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const idempotencyKey = getIdempotencyKeyFromRequest(req);
       let workspaceIdForReplay: string | undefined;
@@ -176,7 +176,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.patch('/api/v1/documents/:id/rename', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
+  app.patch('/api/v1/documents/:id/rename', authMiddleware, checkWorkspaceCapability('canEditDocuments', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { title } = req.body;
       if (!title || typeof title !== 'string') {
@@ -200,7 +200,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.patch('/api/v1/documents/:id/parent', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
+  app.patch('/api/v1/documents/:id/parent', authMiddleware, checkWorkspaceCapability('canEditDocuments', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { parent_id } = req.body;
       const existing = await DocumentModel.findById(req.params.id);
@@ -226,7 +226,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.patch('/api/v1/documents/:id/move', authMiddleware, checkPermission('collection:edit', 'document'), async (req: AuthRequest, res: Response) => {
+  app.patch('/api/v1/documents/:id/move', authMiddleware, checkWorkspaceCapability('canEditDocuments', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const { parent_id, position } = req.body;
       const existing = await DocumentModel.findById(req.params.id);
@@ -252,7 +252,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.delete('/api/v1/documents/:id', authMiddleware, checkPermission('collection:delete', 'document'), async (req: AuthRequest, res: Response) => {
+  app.delete('/api/v1/documents/:id', authMiddleware, checkWorkspaceCapability('canDeleteDocuments', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const existing = await DocumentModel.findById(req.params.id);
       if (!existing) {
@@ -284,7 +284,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/v1/documents/:id/blocks', authMiddleware, checkPermission('collection:view', 'document'), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/documents/:id/blocks', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: AuthRequest, res: Response) => {
     try {
       const blocks = await BlockModel.findByDocument(req.params.id);
       res.json({ blocks });
@@ -293,7 +293,7 @@ export function registerDocumentRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/v1/workspaces/:workspaceId/documents/search', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/workspaces/:workspaceId/documents/search', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     try {
       const { q: query, limit = 20 } = req.query;
       if (!query || typeof query !== 'string') {

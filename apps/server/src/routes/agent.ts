@@ -1,12 +1,27 @@
-import type { Express, Request, Response } from 'express';
-import crypto from 'node:crypto';
+import type { Express, Response } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { checkPermission } from '../middleware/rbac.js';
-import { getWorkspaceIdFromBody } from '../services/request.js';
-import { getRunById, startSupervisorRun, subscribeToRun } from '../services/agent.js';
+import { checkWorkspaceCapability } from '../middleware/rbac.js';
+import {
+  createAndStartAgentRun,
+  getAgentRunById,
+  listAgentRuns,
+  startSupervisorRun,
+  subscribeToRun,
+} from '../services/agent.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
 import { checkQuota, recordUsage } from '../services/quota.js';
+import { getWorkspaceIdFromRequest } from '../services/request.js';
 import { pool } from '../db/client.js';
+
+function sendApiError(res: Response, status: number, code: string, message: string, details: unknown = null) {
+  res.status(status).json({
+    error: {
+      code,
+      message,
+      details,
+    },
+  });
+}
 
 function sendSse(res: Response, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -16,22 +31,45 @@ function sendDone(res: Response) {
   res.write('event: done\ndata: {}\n\n');
 }
 
-function registerRunReadRoutes(app: Express, path: string) {
-  app.get(path, authMiddleware, async (req: AuthRequest, res: Response) => {
+async function createTemplateRun(params: {
+  req: AuthRequest;
+  input: string;
+  workspaceId: string;
+  template: 'supervisor' | 'research' | 'summarize' | 'brainstorm' | 'outline';
+  mode: 'auto' | 'hybrid' | 'graph';
+}) {
+  const quota = await checkQuota(params.workspaceId, 'agent_runs');
+  if (!quota.allowed) {
+    return {
+      error: { status: 429, code: 'FORBIDDEN', message: 'Daily agent run quota exceeded', details: quota },
+    };
+  }
+
+  const run = await startSupervisorRun({
+    workspace_id: params.workspaceId,
+    user_id: params.req.userId!,
+    query: params.input,
+    mode: params.mode,
+    template: params.template,
+  });
+
+  await recordUsage(params.workspaceId, params.req.userId!, 'agent_runs', 1);
+  return { run };
+}
+
+function attachRunReadRoute(app: Express, path: string) {
+  app.get(path, authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     const runId = req.params.run_id || req.params.runId;
-    if (!runId) {
-      res.status(400).json({ error: 'run_id is required' });
+    const workspaceId = getWorkspaceIdFromRequest(req);
+
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
       return;
     }
 
-    const run = await getRunById(runId);
+    const run = await getAgentRunById(runId, workspaceId, req.userId!);
     if (!run) {
-      res.status(404).json({ error: 'run not found' });
-      return;
-    }
-
-    if (run.user_id !== req.userId) {
-      res.status(403).json({ error: 'Forbidden' });
+      sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
       return;
     }
 
@@ -39,22 +77,19 @@ function registerRunReadRoutes(app: Express, path: string) {
   });
 }
 
-function registerRunStreamRoutes(app: Express, path: string) {
-  app.get(path, authMiddleware, async (req: AuthRequest, res: Response) => {
+function attachRunStreamRoute(app: Express, path: string) {
+  app.get(path, authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     const runId = req.params.run_id || req.params.runId;
-    if (!runId) {
-      res.status(400).json({ error: 'run_id is required' });
+    const workspaceId = getWorkspaceIdFromRequest(req);
+
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
       return;
     }
 
-    const run = await getRunById(runId);
+    const run = await getAgentRunById(runId, workspaceId, req.userId!);
     if (!run) {
-      res.status(404).json({ error: 'run not found' });
-      return;
-    }
-
-    if (run.user_id !== req.userId) {
-      res.status(403).json({ error: 'Forbidden' });
+      sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
       return;
     }
 
@@ -62,291 +97,311 @@ function registerRunStreamRoutes(app: Express, path: string) {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    sendSse(res, { type: 'meta', run_id: runId, mode: run.mode, template: run.type });
-    for (const step of run.steps || []) {
+    let closed = false;
+    const finish = () => {
+      if (closed) return;
+      closed = true;
+      sendDone(res);
+      res.end();
+    };
+
+    sendSse(res, { type: 'meta', run_id: run.id, mode: run.mode, template: run.type });
+    sendSse(res, { type: 'run', run });
+    for (const step of run.steps ?? []) {
       sendSse(res, { type: 'step', step });
     }
 
-    if (run.status !== 'running') {
-      sendSse(res, { type: 'run', run });
+    if (run.status === 'completed' || run.status === 'failed') {
       sendSse(res, { type: 'done' });
-      sendDone(res);
-      res.end();
+      finish();
       return;
     }
 
     const unsubscribe = subscribeToRun(runId, (event) => {
+      if (closed) return;
       sendSse(res, event);
       if (event.type === 'done') {
-        sendDone(res);
         unsubscribe();
         clearInterval(poller);
-        res.end();
+        finish();
       }
     });
 
     const poller = setInterval(async () => {
-      const latest = await getRunById(runId);
-      if (!latest) return;
-      if (latest.status !== 'running') {
+      const latest = await getAgentRunById(runId, workspaceId, req.userId!);
+      if (!latest || closed) return;
+      if (latest.status === 'completed' || latest.status === 'failed') {
         sendSse(res, { type: 'run', run: latest });
         sendSse(res, { type: 'done' });
-        sendDone(res);
         clearInterval(poller);
         unsubscribe();
-        res.end();
+        finish();
       }
     }, 800);
 
     req.on('close', () => {
       clearInterval(poller);
       unsubscribe();
+      closed = true;
     });
   });
 }
 
 export function registerAgentRoutes(app: Express): void {
-  // Start Supervisor run.
-  app.post('/api/v1/agents/supervisor', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
-    if (!isFeatureEnabled('SUPERVISOR_V1')) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-
-    const query = String(req.body?.query ?? '').trim();
-    const workspaceId = getWorkspaceIdFromBody(req.body);
+  app.post('/api/v1/agents/runs', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const input = String(req.body?.input ?? req.body?.query ?? req.body?.text ?? '').trim();
+    const workspaceId = getWorkspaceIdFromRequest(req);
     const mode = (req.body?.mode ?? 'auto') as 'auto' | 'hybrid' | 'graph';
+    const template = (req.body?.template ?? 'supervisor') as 'supervisor' | 'research' | 'summarize' | 'brainstorm' | 'outline';
 
-    if (!query || !workspaceId) {
-      res.status(400).json({ error: 'query and workspace_id are required' });
+    if (template === 'supervisor' && !isFeatureEnabled('SUPERVISOR_V1')) {
+      sendApiError(res, 404, 'NOT_FOUND', 'Not found');
       return;
     }
 
-    const quota = await checkQuota(workspaceId, 'agent_runs');
-    if (!quota.allowed) {
-      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'input and workspace_id are required');
       return;
     }
 
     try {
-      const runId = crypto.randomUUID();
-      await startSupervisorRun({
-        runId,
-        query,
-        workspace_id: workspaceId,
-        user_id: req.userId!,
+      const quota = await checkQuota(workspaceId, 'agent_runs');
+      if (!quota.allowed) {
+        sendApiError(res, 429, 'FORBIDDEN', 'Daily agent run quota exceeded', quota);
+        return;
+      }
+
+      const run = await createAndStartAgentRun({
+        workspaceId,
+        userId: req.userId!,
+        input,
         mode,
-        template: 'supervisor',
+        template,
       });
+
       await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.json({ run_id: runId, status: 'started' });
+      res.status(201).json(run);
     } catch (error) {
-      res.status(500).json({
-        error: 'Failed to start supervisor run',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      });
+      sendApiError(res, 500, 'INVALID_STATE', 'Failed to create agent run', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // Compatibility route: research template.
-  app.post('/api/v1/agents/research', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
-    const query = String(req.body?.query ?? '').trim();
-    const workspaceId = getWorkspaceIdFromBody(req.body);
-    if (!query || !workspaceId) {
-      res.status(400).json({ error: 'query and workspace_id are required' });
+  app.get('/api/v1/agents/runs', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'workspace_id is required');
       return;
     }
 
-    const quota = await checkQuota(workspaceId, 'agent_runs');
-    if (!quota.allowed) {
-      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
-      return;
-    }
+    const limit = Math.max(1, Math.min(50, parseInt(String(req.query.limit ?? '10'), 10) || 10));
 
     try {
-      const runId = crypto.randomUUID();
-      await startSupervisorRun({
-        runId,
-        query,
-        workspace_id: workspaceId,
-        user_id: req.userId!,
-        mode: 'auto',
-        template: 'research',
-      });
-      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.json({ run_id: runId, status: 'started' });
+      const runs = await listAgentRuns(workspaceId, req.userId!, limit);
+      res.json({ runs });
     } catch (error) {
-      res.status(500).json({
-        error: 'Failed to start research run',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      });
+      sendApiError(res, 500, 'INVALID_STATE', 'Failed to list agent runs', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  // Compatibility route: summarize template.
-  app.post('/api/v1/agents/summarize', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
-    const text = String(req.body?.text ?? '').trim();
-    const workspaceId = getWorkspaceIdFromBody(req.body);
-    if (!text || !workspaceId) {
-      res.status(400).json({ error: 'text and workspace_id are required' });
+  attachRunReadRoute(app, '/api/v1/agents/runs/:run_id');
+  attachRunReadRoute(app, '/api/v1/agents/runs/:runId');
+
+  attachRunStreamRoute(app, '/api/v1/agents/runs/:run_id/stream');
+  attachRunStreamRoute(app, '/api/v1/agents/runs/:runId/stream');
+
+  app.post('/api/v1/agents/supervisor', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    if (!isFeatureEnabled('SUPERVISOR_V1')) {
+      sendApiError(res, 404, 'NOT_FOUND', 'Not found');
       return;
     }
 
-    const quota = await checkQuota(workspaceId, 'agent_runs');
-    if (!quota.allowed) {
-      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const input = String(req.body?.query ?? '').trim();
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'query and workspace_id are required');
       return;
     }
 
-    try {
-      const runId = crypto.randomUUID();
-      await startSupervisorRun({
-        runId,
-        query: text,
-        workspace_id: workspaceId,
-        user_id: req.userId!,
-        mode: 'hybrid',
-        template: 'summarize',
-      });
-      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.json({ run_id: runId, status: 'started' });
-    } catch (error) {
-      res.status(500).json({
-        error: 'Failed to start summarize run',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      });
+    const result = await createTemplateRun({
+      req,
+      input,
+      workspaceId,
+      template: 'supervisor',
+      mode: (req.body?.mode ?? 'auto') as 'auto' | 'hybrid' | 'graph',
+    });
+
+    if ('error' in result) {
+      const error = result.error!;
+      sendApiError(res, error.status, error.code, error.message, error.details);
+      return;
     }
+    res.json({ run_id: result.run.id, status: 'started' });
   });
 
-  // Brainstorm template.
-  app.post('/api/v1/agents/brainstorm', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
-    const query = String(req.body?.query ?? '').trim();
-    const workspaceId = getWorkspaceIdFromBody(req.body);
-    if (!query || !workspaceId) {
-      res.status(400).json({ error: 'query and workspace_id are required' });
+  app.post('/api/v1/agents/research', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const input = String(req.body?.query ?? '').trim();
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'query and workspace_id are required');
       return;
     }
 
-    const quota = await checkQuota(workspaceId, 'agent_runs');
-    if (!quota.allowed) {
-      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+    const result = await createTemplateRun({
+      req,
+      input,
+      workspaceId,
+      template: 'research',
+      mode: 'auto',
+    });
+
+    if ('error' in result) {
+      const error = result.error!;
+      sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-
-    try {
-      const runId = crypto.randomUUID();
-      await startSupervisorRun({
-        runId,
-        query,
-        workspace_id: workspaceId,
-        user_id: req.userId!,
-        mode: 'auto',
-        template: 'brainstorm',
-      });
-      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.json({ run_id: runId, status: 'started' });
-    } catch (error) {
-      res.status(500).json({
-        error: 'Failed to start brainstorm run',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
+    res.json({ run_id: result.run.id, status: 'started' });
   });
 
-  // Outline template.
-  app.post('/api/v1/agents/outline', authMiddleware, checkPermission('collection:view'), async (req: AuthRequest, res: Response) => {
-    const query = String(req.body?.query ?? '').trim();
-    const workspaceId = getWorkspaceIdFromBody(req.body);
-    if (!query || !workspaceId) {
-      res.status(400).json({ error: 'query and workspace_id are required' });
+  app.post('/api/v1/agents/summarize', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const input = String(req.body?.text ?? '').trim();
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'text and workspace_id are required');
       return;
     }
 
-    const quota = await checkQuota(workspaceId, 'agent_runs');
-    if (!quota.allowed) {
-      res.status(429).json({ error: 'Daily agent run quota exceeded', quota });
+    const result = await createTemplateRun({
+      req,
+      input,
+      workspaceId,
+      template: 'summarize',
+      mode: 'hybrid',
+    });
+
+    if ('error' in result) {
+      const error = result.error!;
+      sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-
-    try {
-      const runId = crypto.randomUUID();
-      await startSupervisorRun({
-        runId,
-        query,
-        workspace_id: workspaceId,
-        user_id: req.userId!,
-        mode: 'hybrid',
-        template: 'outline',
-      });
-      await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.json({ run_id: runId, status: 'started' });
-    } catch (error) {
-      res.status(500).json({
-        error: 'Failed to start outline run',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
+    res.json({ run_id: result.run.id, status: 'started' });
   });
 
-  // Read run state (snake + camel compatibility)
-  registerRunReadRoutes(app, '/api/v1/agents/runs/:run_id');
-  registerRunReadRoutes(app, '/api/v1/agents/runs/:runId');
+  app.post('/api/v1/agents/brainstorm', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const input = String(req.body?.query ?? '').trim();
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'query and workspace_id are required');
+      return;
+    }
 
-  // Stream run events (snake + camel compatibility)
-  registerRunStreamRoutes(app, '/api/v1/agents/runs/:run_id/stream');
-  registerRunStreamRoutes(app, '/api/v1/agents/runs/:runId/stream');
+    const result = await createTemplateRun({
+      req,
+      input,
+      workspaceId,
+      template: 'brainstorm',
+      mode: 'auto',
+    });
 
-  /**
-   * GET /api/v1/agents/runs/:run_id/tree
-   * P2-1: Returns the full recursive run tree rooted at this run or its root ancestor.
-   * Uses a recursive CTE to traverse parent_run_id / root_run_id linkage.
-   */
-  app.get('/api/v1/agents/runs/:run_id/tree', authMiddleware, async (req: AuthRequest, res: Response) => {
+    if ('error' in result) {
+      const error = result.error!;
+      sendApiError(res, error.status, error.code, error.message, error.details);
+      return;
+    }
+    res.json({ run_id: result.run.id, status: 'started' });
+  });
+
+  app.post('/api/v1/agents/outline', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    const input = String(req.body?.query ?? '').trim();
+    if (!input || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'query and workspace_id are required');
+      return;
+    }
+
+    const result = await createTemplateRun({
+      req,
+      input,
+      workspaceId,
+      template: 'outline',
+      mode: 'hybrid',
+    });
+
+    if ('error' in result) {
+      const error = result.error!;
+      sendApiError(res, error.status, error.code, error.message, error.details);
+      return;
+    }
+    res.json({ run_id: result.run.id, status: 'started' });
+  });
+
+  app.get('/api/v1/agents/runs/:run_id/tree', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     const runId = req.params.run_id;
-    if (!runId || !pool) {
-      res.status(400).json({ error: 'run_id required' });
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!runId || !workspaceId || !pool) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
       return;
     }
 
-    const run = await getRunById(runId);
-    if (!run) { res.status(404).json({ error: 'run not found' }); return; }
-    if (run.user_id !== req.userId) { res.status(403).json({ error: 'Forbidden' }); return; }
+    const run = await getAgentRunById(runId, workspaceId, req.userId!);
+    if (!run) {
+      sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
+      return;
+    }
 
     try {
-      // Resolve the root of the tree
-      const rootRes = await pool.query(
-        `SELECT COALESCE(root_run_id, id) AS root_id FROM agent_runs WHERE id = $1`,
-        [runId]
+      const rootResult = await pool.query<{ root_id: string }>(
+        `SELECT COALESCE(root_run_id, id) AS root_id
+         FROM agent_runs
+         WHERE id = $1 AND workspace_id = $2 AND user_id = $3`,
+        [runId, workspaceId, req.userId!]
       );
-      const rootId: string = rootRes.rows[0]?.root_id ?? runId;
+      const rootId = rootResult.rows[0]?.root_id ?? runId;
 
-      // Recursive CTE: collect every run in the tree
-      const treeRes = await pool.query(
+      const treeResult = await pool.query(
         `WITH RECURSIVE run_tree AS (
-           SELECT id, parent_run_id, root_run_id, depth, type, query, status, token_usage,
-                  started_at, finished_at, created_at
-           FROM agent_runs WHERE id = $1
+           SELECT id, workspace_id, user_id, parent_run_id, root_run_id, depth, type, query, status, token_usage,
+                  input_summary, output_summary, error_summary, started_at, finished_at, created_at
+           FROM agent_runs
+           WHERE id = $1 AND workspace_id = $2 AND user_id = $3
            UNION ALL
-           SELECT r.id, r.parent_run_id, r.root_run_id, r.depth, r.type, r.query, r.status,
-                  r.token_usage, r.started_at, r.finished_at, r.created_at
+           SELECT r.id, r.workspace_id, r.user_id, r.parent_run_id, r.root_run_id, r.depth, r.type, r.query, r.status, r.token_usage,
+                  r.input_summary, r.output_summary, r.error_summary, r.started_at, r.finished_at, r.created_at
            FROM agent_runs r
            INNER JOIN run_tree rt ON r.parent_run_id = rt.id
+           WHERE r.workspace_id = $2 AND r.user_id = $3
          )
          SELECT * FROM run_tree ORDER BY depth ASC, created_at ASC`,
-        [rootId]
+        [rootId, workspaceId, req.userId!]
       );
 
-      // Build nested tree structure
-      const rows: any[] = treeRes.rows;
+      const rows = treeResult.rows.map((row: any) => ({
+        id: row.id,
+        workspaceId: row.workspace_id,
+        userId: row.user_id,
+        parentRunId: row.parent_run_id,
+        rootRunId: row.root_run_id,
+        depth: row.depth,
+        type: row.type,
+        inputSummary: row.input_summary ?? row.query,
+        outputSummary: row.output_summary,
+        errorSummary: row.error_summary,
+        status: row.status,
+        tokenUsage: row.token_usage,
+        startedAt: row.started_at?.toISOString?.() ?? row.started_at ?? null,
+        finishedAt: row.finished_at?.toISOString?.() ?? row.finished_at ?? null,
+        createdAt: row.created_at?.toISOString?.() ?? row.created_at,
+      }));
+
       const nodeMap = new Map<string, any>();
       for (const row of rows) {
         nodeMap.set(row.id, { ...row, children: [] });
       }
+
       let root: any = null;
       for (const row of rows) {
         const node = nodeMap.get(row.id)!;
-        if (row.parent_run_id && nodeMap.has(row.parent_run_id)) {
-          nodeMap.get(row.parent_run_id)!.children.push(node);
+        if (row.parentRunId && nodeMap.has(row.parentRunId)) {
+          nodeMap.get(row.parentRunId)!.children.push(node);
         } else {
           root = node;
         }
@@ -354,7 +409,7 @@ export function registerAgentRoutes(app: Express): void {
 
       res.json({ root_run_id: rootId, tree: root ?? { ...run, children: [] } });
     } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch run tree' });
+      sendApiError(res, 500, 'INVALID_STATE', 'Failed to fetch run tree', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 }

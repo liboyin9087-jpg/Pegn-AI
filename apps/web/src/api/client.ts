@@ -139,6 +139,94 @@ export interface SearchIndexStatusSummary {
 
 export type SearchIndexStatusResponse = SearchIndexStatusSummary;
 
+export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
+
+export interface WorkspacePermissionSummary {
+  canViewWorkspace: boolean;
+  canManageMembers: boolean;
+  canManageSettings: boolean;
+  canEditDocuments: boolean;
+  canDeleteDocuments: boolean;
+  canRunAutomation: boolean;
+}
+
+export interface WorkspaceMembershipSummary {
+  effectiveRole: WorkspaceRole;
+  permissions: string[];
+  permissionSummary: WorkspacePermissionSummary;
+}
+
+export interface WorkspaceRecord extends WorkspaceMembershipSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  slug?: string | null;
+  settings?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkspaceMemberRecord {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  name?: string | null;
+  email: string;
+  role: WorkspaceRole;
+  joined_at?: string;
+}
+
+export interface WorkspaceInviteRecord {
+  id: string;
+  workspace_id: string;
+  email: string;
+  role: 'admin' | 'editor' | 'viewer';
+  status: 'pending' | 'accepted' | 'revoked' | 'expired';
+  expires_at: string;
+  created_at?: string;
+  accepted_at?: string | null;
+  revoked_at?: string | null;
+  invite_link?: string;
+}
+
+export type AgentRunStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface AgentRunStep {
+  id: string;
+  stepKey: string;
+  name: string;
+  worker: string;
+  position: number;
+  status: 'pending' | 'running' | 'done' | 'error' | 'aborted';
+  input?: unknown;
+  output?: unknown;
+  error?: string | null;
+  tokenUsage?: number | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface AgentRun {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  type: string;
+  mode: 'auto' | 'hybrid' | 'graph';
+  status: AgentRunStatus;
+  inputSummary: string;
+  outputSummary?: string | null;
+  errorSummary?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  parentRunId?: string | null;
+  rootRunId?: string | null;
+  depth: number;
+  tokenUsage?: number | null;
+  result?: { answer?: string; [key: string]: unknown } | null;
+  steps: AgentRunStep[];
+}
+
 export type { OfflineQueueItem };
 
 export type OfflineQueueMetricsSource = 'bootstrap' | 'queue_changed' | 'online' | 'interval';
@@ -263,9 +351,9 @@ export const login = (email: string, password: string) =>
 export const getMe = () => api<{ user: any }>('/auth/me');
 
 // ── Workspace ────────────────────────────────────────────────
-export const listWorkspaces = () => api<{ workspaces: any[] }>('/workspaces');
+export const listWorkspaces = () => api<{ workspaces: WorkspaceRecord[] }>('/workspaces');
 export const createWorkspace = (name: string) =>
-  api<any>('/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+  api<WorkspaceRecord>('/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
 
 // ── Documents ────────────────────────────────────────────────
 export const listDocuments = (wsId: string) =>
@@ -368,15 +456,40 @@ export const startSummarizeAgent = (text: string, wsId: string) =>
     method: 'POST',
     body: JSON.stringify({ text, workspace_id: wsId }),
   });
-export const getAgentRun = (runId: string) => api<any>(`/agents/runs/${runId}`);
+export const createAgentRun = (input: string, wsId: string, options?: { mode?: 'auto' | 'hybrid' | 'graph'; template?: string }) =>
+  api<AgentRun>('/agents/runs', {
+    method: 'POST',
+    body: JSON.stringify({
+      input,
+      workspace_id: wsId,
+      ...(options?.mode ? { mode: options.mode } : {}),
+      ...(options?.template ? { template: options.template } : {}),
+    }),
+  });
+
+export const getAgentRun = (runId: string, wsId: string) =>
+  api<AgentRun>(`/agents/runs/${runId}?workspace_id=${encodeURIComponent(wsId)}`);
+
+export const listAgentRuns = (wsId: string, limit = 10) =>
+  api<{ runs: AgentRun[] }>(`/agents/runs?workspace_id=${encodeURIComponent(wsId)}&limit=${limit}`);
+
+export function streamAgentRun(
+  runId: string,
+  wsId: string,
+  onData: (d: any) => void,
+  onDone: () => void,
+  onError?: () => void
+) {
+  return sseStream(`/api/v1/agents/runs/${runId}/stream?workspace_id=${encodeURIComponent(wsId)}`, onData, onDone, onError);
+}
 
 // ── Workspace Members & Invites ──────────────────────────────
 export const listWorkspaceMembers = (workspaceId: string) =>
-  api<{ members: any[] }>(`/workspaces/${workspaceId}/members`);
+  api<{ members: WorkspaceMemberRecord[] }>(`/workspaces/${workspaceId}/members`);
 export const listWorkspaceInvites = (workspaceId: string) =>
-  api<{ invites: any[] }>(`/workspaces/${workspaceId}/invites`);
+  api<{ invites: WorkspaceInviteRecord[] }>(`/workspaces/${workspaceId}/invites`);
 export const createWorkspaceInvite = (workspaceId: string, email: string, role: 'admin' | 'editor' | 'viewer') =>
-  api<{ invite: any }>(`/workspaces/${workspaceId}/invites`, {
+  api<{ invite: WorkspaceInviteRecord }>(`/workspaces/${workspaceId}/invites`, {
     method: 'POST',
     body: JSON.stringify({ email, role }),
   });
@@ -715,7 +828,8 @@ export function sseStream(
   onError?: () => void
 ) {
   const token = getToken();
-  const url = `${import.meta.env.VITE_API_URL ?? 'http://localhost:4000'}${path}${token ? `?token=${token}` : ''}`;
+  const separator = path.includes('?') ? '&' : '?';
+  const url = `${import.meta.env.VITE_API_URL ?? 'http://localhost:4000'}${path}${token ? `${separator}token=${token}` : ''}`;
   const es = new EventSource(url);
   es.onmessage = (e) => { try { onData(JSON.parse(e.data)); } catch { } };
   es.addEventListener('done', () => { onDone(); es.close(); });

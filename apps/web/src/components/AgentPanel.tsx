@@ -1,61 +1,75 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { startResearchAgent, startSummarizeAgent, startSupervisorAgent, sseStream, api } from '../api/client';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  api,
+  createAgentRun,
+  getAgentRun,
+  streamAgentRun,
+  type AgentRun,
+  type AgentRunStep,
+} from '../api/client';
+import AgentRunHistory from './AgentRunHistory';
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: 'text-text-tertiary',
-  running: 'text-warning',
-  done: 'text-success',
-  error: 'text-error',
+const STATUS_COPY: Record<AgentRun['status'], string> = {
+  queued: 'Queued',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
 };
 
-const STATUS_ICON: Record<string, string> = {
-  pending: '○',
-  running: '◔',
-  done: '●',
-  error: '✕',
+const STATUS_COLOR: Record<AgentRun['status'], string> = {
+  queued: 'text-text-tertiary',
+  running: 'text-warning',
+  completed: 'text-success',
+  failed: 'text-error',
 };
 
 type AgentMode = 'research' | 'summarize' | 'brainstorm' | 'outline';
 
-const MODE_CONFIG: Record<AgentMode, { icon: string; label: string; placeholder: string; desc: string }> = {
+const MODE_CONFIG: Record<AgentMode, { icon: string; label: string; placeholder: string; desc: string; template: string; mode: 'auto' | 'hybrid' | 'graph' }> = {
   research: {
-    icon: '🔎',
+    icon: 'R',
     label: 'Research',
-    placeholder: '輸入要研究的主題...',
-    desc: '收集資料並整理重點。',
+    placeholder: 'Ask the agent to investigate a topic...',
+    desc: 'Grounded research with retrieval and synthesis.',
+    template: 'research',
+    mode: 'auto',
   },
   summarize: {
-    icon: '📝',
+    icon: 'S',
     label: 'Summarize',
-    placeholder: '輸入要摘要的內容...',
-    desc: '快速整理內容摘要。',
+    placeholder: 'Paste text or describe what to summarize...',
+    desc: 'Condense content into a concise summary.',
+    template: 'summarize',
+    mode: 'hybrid',
   },
   brainstorm: {
-    icon: '💡',
+    icon: 'B',
     label: 'Brainstorm',
-    placeholder: '輸入要發想的題目...',
-    desc: '展開點子與可能方向。',
+    placeholder: 'Describe the problem or topic to ideate...',
+    desc: 'Generate options, angles, and next steps.',
+    template: 'brainstorm',
+    mode: 'auto',
   },
   outline: {
-    icon: '📚',
+    icon: 'O',
     label: 'Outline',
-    placeholder: '輸入要整理的大綱主題...',
-    desc: '建立結構化大綱。',
+    placeholder: 'Describe the structure you want...',
+    desc: 'Turn an idea into a structured outline.',
+    template: 'outline',
+    mode: 'hybrid',
   },
 };
 
-interface Step {
-  name: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  output?: string | Record<string, unknown>;
+function getStorageKey(workspaceId: string) {
+  return `agent:last-run:${workspaceId}`;
 }
 
-interface RunState {
-  id: string;
-  status: 'running' | 'done' | 'error';
-  steps: Step[];
-  type: AgentMode;
-  result?: { answer?: string };
+function mergeStep(steps: AgentRunStep[], nextStep: AgentRunStep): AgentRunStep[] {
+  const index = steps.findIndex((step) => step.id === nextStep.id || step.stepKey === nextStep.stepKey);
+  if (index === -1) return [...steps, nextStep].sort((a, b) => a.position - b.position);
+  const next = [...steps];
+  next[index] = nextStep;
+  return next.sort((a, b) => a.position - b.position);
 }
 
 export default function AgentPanel({
@@ -67,12 +81,18 @@ export default function AgentPanel({
 }) {
   const [mode, setMode] = useState<AgentMode>('research');
   const [input, setInput] = useState('');
-  const [run, setRun] = useState<RunState | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [run, setRun] = useState<AgentRun | null>(null);
+  const [createPending, setCreatePending] = useState(false);
+  const [streamPending, setStreamPending] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [streamingAnswer, setStreamingAnswer] = useState('');
   const abortRef = useRef<(() => void) | null>(null);
   const streamingAnswerRef = useRef('');
+
+  const activeStatus = run?.status;
+  const isBusy = createPending || streamPending;
+  const storageKey = useMemo(() => getStorageKey(workspaceId), [workspaceId]);
 
   const updateStreamingAnswer = useCallback((updater: (prev: string) => string) => {
     setStreamingAnswer((prev) => {
@@ -82,88 +102,140 @@ export default function AgentPanel({
     });
   }, []);
 
-  const handleStart = useCallback(async () => {
-    if (!input.trim() || !workspaceId || loading) return;
-
-    setLoading(true);
-    setSaved(false);
-    setRun(null);
-    streamingAnswerRef.current = '';
-    setStreamingAnswer('');
-
-    abortRef.current?.();
-
-    try {
-      let res: { run_id: string };
-      if (mode === 'research') {
-        res = await startResearchAgent(input, workspaceId);
-      } else if (mode === 'summarize') {
-        res = await startSummarizeAgent(input, workspaceId);
-      } else {
-        res = await startSupervisorAgent(input, workspaceId, 'auto');
-      }
-
-      const runId = res.run_id;
-      setRun({ id: runId, status: 'running', steps: [], type: mode });
-
-      const stop = sseStream(
-        `/api/v1/agents/runs/${runId}/stream`,
-        (data) => {
-          if (data.type === 'step') {
-            setRun((prev) => {
-              if (!prev) return prev;
-              const existingIdx = prev.steps.findIndex((step) => step.name === data.step.name);
-              const newSteps = [...prev.steps];
-              if (existingIdx >= 0) newSteps[existingIdx] = data.step;
-              else newSteps.push(data.step);
-              return { ...prev, steps: newSteps };
-            });
-            return;
-          }
-
-          if (data.type === 'token') {
-            updateStreamingAnswer((prev) => prev + (data.token || ''));
-            return;
-          }
-
-          if (data.type === 'run') {
-            const completedRun = data.run as RunState;
-            setRun(completedRun);
-            if (!streamingAnswerRef.current && completedRun.result?.answer) {
-              updateStreamingAnswer(() => completedRun.result?.answer || '');
-            }
-          }
-        },
-        () => {
-          setLoading(false);
-          abortRef.current = null;
-        },
-        () => {
-          setLoading(false);
-          abortRef.current = null;
-          setRun((prev) => (prev ? { ...prev, status: 'error' } : prev));
-        }
-      );
-
-      abortRef.current = stop;
-    } catch {
-      setLoading(false);
-    }
-  }, [input, workspaceId, loading, mode, updateStreamingAnswer]);
-
-  const handleStop = useCallback(() => {
+  const stopStreaming = useCallback(() => {
     abortRef.current?.();
     abortRef.current = null;
-    setLoading(false);
-    setRun((prev) => (prev ? { ...prev, status: 'error' } : null));
+    setStreamPending(false);
   }, []);
+
+  const restoreRun = useCallback(async (runId: string, shouldAttach = true) => {
+    if (!workspaceId || !runId) return;
+
+    try {
+      const nextRun = await getAgentRun(runId, workspaceId);
+      setRun(nextRun);
+      localStorage.setItem(storageKey, runId);
+
+      if ((nextRun.status === 'queued' || nextRun.status === 'running') && shouldAttach) {
+        stopStreaming();
+        setStreamPending(true);
+
+        const stop = streamAgentRun(
+          runId,
+          workspaceId,
+          (data) => {
+            if (data.type === 'step') {
+              const nextStep = data.step as AgentRunStep;
+              setRun((prev) => (prev ? { ...prev, steps: mergeStep(prev.steps, nextStep) } : prev));
+              return;
+            }
+
+            if (data.type === 'token') {
+              updateStreamingAnswer((prev) => prev + String(data.token ?? ''));
+              return;
+            }
+
+            if (data.type === 'run') {
+              const nextSnapshot = data.run as AgentRun;
+              setRun(nextSnapshot);
+              if (!streamingAnswerRef.current && typeof nextSnapshot.result?.answer === 'string') {
+                updateStreamingAnswer(() => nextSnapshot.result?.answer ?? '');
+              }
+              if (nextSnapshot.status === 'failed' && nextSnapshot.errorSummary) {
+                setRuntimeError(nextSnapshot.errorSummary);
+              }
+              return;
+            }
+
+            if (data.type === 'error') {
+              setRuntimeError(String(data.message ?? 'Agent run failed'));
+            }
+          },
+          async () => {
+            setStreamPending(false);
+            abortRef.current = null;
+            try {
+              const latest = await getAgentRun(runId, workspaceId);
+              setRun(latest);
+              if (latest.status === 'failed' && latest.errorSummary) {
+                setRuntimeError(latest.errorSummary);
+              }
+            } catch {
+              // Keep the latest streamed snapshot if final reconcile fails.
+            }
+          },
+          async () => {
+            setStreamPending(false);
+            abortRef.current = null;
+            try {
+              const latest = await getAgentRun(runId, workspaceId);
+              setRun(latest);
+              setRuntimeError(latest.errorSummary ?? 'Failed to attach run stream');
+            } catch {
+              setRuntimeError('Failed to attach run stream');
+            }
+          }
+        );
+
+        abortRef.current = stop;
+      }
+    } catch {
+      setRuntimeError('Failed to load run state');
+    }
+  }, [storageKey, stopStreaming, updateStreamingAnswer, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const lastRunId = localStorage.getItem(storageKey);
+    if (!lastRunId) return;
+    void restoreRun(lastRunId);
+    return () => {
+      stopStreaming();
+    };
+  }, [restoreRun, stopStreaming, storageKey, workspaceId]);
+
+  const handleStart = useCallback(async () => {
+    if (!workspaceId || !input.trim() || createPending) return;
+
+    setCreatePending(true);
+    setSaved(false);
+    setRuntimeError(null);
+    updateStreamingAnswer(() => '');
+    stopStreaming();
+
+    try {
+      const config = MODE_CONFIG[mode];
+      const nextRun = await createAgentRun(input.trim(), workspaceId, {
+        mode: config.mode,
+        template: config.template,
+      });
+
+      setRun(nextRun);
+      localStorage.setItem(storageKey, nextRun.id);
+
+      if (nextRun.status === 'failed' && nextRun.errorSummary) {
+        setRuntimeError(nextRun.errorSummary);
+      } else {
+        await restoreRun(nextRun.id, true);
+      }
+    } catch {
+      setRuntimeError('Failed to create agent run');
+    } finally {
+      setCreatePending(false);
+    }
+  }, [createPending, input, mode, restoreRun, stopStreaming, storageKey, updateStreamingAnswer, workspaceId]);
+
+  const handleRetry = useCallback(async () => {
+    if (run?.status !== 'failed') return;
+    await handleStart();
+  }, [handleStart, run?.status]);
 
   const handleSaveToDoc = useCallback(async () => {
     const answer = run?.result?.answer || streamingAnswerRef.current;
     if (!answer || !workspaceId) return;
 
-    const cfg = MODE_CONFIG[mode];
-    const title = `${cfg.icon} ${cfg.label}: ${input.slice(0, 30)}`;
+    const config = MODE_CONFIG[mode];
+    const title = `${config.icon} ${config.label}: ${input.slice(0, 30)}`;
     try {
       await api('/documents', {
         method: 'POST',
@@ -175,144 +247,181 @@ export default function AgentPanel({
       });
       setSaved(true);
     } catch {
-      alert('儲存失敗');
+      setRuntimeError('Failed to save result to document');
     }
   }, [input, mode, run?.result?.answer, workspaceId]);
 
   const handleUseDoc = useCallback(() => {
-    if (activeDoc) {
-      setInput(activeDoc.title || '');
+    if (activeDoc?.title) {
+      setInput(String(activeDoc.title));
     }
   }, [activeDoc]);
 
-  const finalAnswer = run?.result?.answer || (streamingAnswer.length > 0 ? streamingAnswer : undefined);
-  const isAnimating = streamingAnswer.length > 0 && streamingAnswer !== run?.result?.answer;
+  const handleSelectRun = useCallback((runId: string) => {
+    setRuntimeError(null);
+    updateStreamingAnswer(() => '');
+    void restoreRun(runId, true);
+  }, [restoreRun, updateStreamingAnswer]);
+
+  const resultAnswer = typeof run?.result?.answer === 'string' ? run.result.answer : undefined;
+  const finalAnswer = resultAnswer || (streamingAnswer.length > 0 ? streamingAnswer : undefined);
+  const canRetry = run?.status === 'failed' && !createPending;
 
   return (
-    <div className="flex flex-col h-full p-3 gap-3 bg-surface">
-      <div className="grid grid-cols-4 gap-1 bg-surface-tertiary rounded-xl p-1 border border-border">
-        {(Object.entries(MODE_CONFIG) as [AgentMode, typeof MODE_CONFIG[AgentMode]][]).map(([nextMode, cfg]) => (
+    <div className="flex h-full flex-col gap-3 bg-surface p-3">
+      <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-tertiary p-1">
+        {(Object.entries(MODE_CONFIG) as [AgentMode, typeof MODE_CONFIG[AgentMode]][]).map(([nextMode, config]) => (
           <button
             key={nextMode}
             onClick={() => setMode(nextMode)}
-            title={cfg.desc}
-            className={`py-1.5 text-xs rounded-lg transition-all flex flex-col items-center gap-0.5 ${
-              mode === nextMode ? 'bg-accent text-white shadow-sm' : 'text-text-tertiary hover:text-text-primary hover:bg-surface'
+            title={config.desc}
+            className={`flex flex-col items-center gap-0.5 rounded-lg py-1.5 text-xs transition-all ${
+              mode === nextMode ? 'bg-accent text-white shadow-sm' : 'text-text-tertiary hover:bg-surface hover:text-text-primary'
             }`}
           >
-            <span className="text-sm">{cfg.icon}</span>
-            <span className="text-[10px] leading-tight">{cfg.label}</span>
+            <span className="text-sm">{config.icon}</span>
+            <span className="text-[10px] leading-tight">{config.label}</span>
           </button>
         ))}
       </div>
 
-      <p className="text-xs text-text-tertiary -mt-1 px-1">{MODE_CONFIG[mode].desc}</p>
+      <p className="px-1 text-xs text-text-tertiary">{MODE_CONFIG[mode].desc}</p>
 
       <div className="space-y-2">
         <textarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(event) => setInput(event.target.value)}
           placeholder={MODE_CONFIG[mode].placeholder}
           rows={3}
-          className="w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm text-text-primary placeholder-text-tertiary outline-none focus:ring-2 focus:ring-accent resize-none"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleStart();
+          className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:ring-2 focus:ring-accent"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              void handleStart();
+            }
           }}
         />
-        <div className="flex gap-2 items-center">
+
+        <div className="flex items-center gap-2">
           {activeDoc && (
             <button
               onClick={handleUseDoc}
-              className="text-xs text-text-tertiary hover:text-accent transition-colors underline underline-offset-2 truncate max-w-[140px]"
-              title={`使用文件：${activeDoc.title}`}
+              className="max-w-[160px] truncate text-xs text-text-tertiary underline underline-offset-2 transition-colors hover:text-accent"
+              title={`Use active doc: ${String(activeDoc.title ?? '')}`}
             >
-              使用文件：{String(activeDoc.title ?? '').slice(0, 12)}
+              Use doc: {String(activeDoc.title ?? '').slice(0, 16)}
             </button>
           )}
           <div className="flex-1" />
           <span className="text-xs text-text-tertiary">Cmd/Ctrl+Enter</span>
-          {loading ? (
+          {streamPending ? (
             <button
-              onClick={handleStop}
-              className="px-3 py-1.5 bg-error-light hover:bg-error/10 border border-error/20 rounded-lg text-error text-xs transition-colors"
+              onClick={stopStreaming}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-tertiary"
             >
-              停止
+              Detach
             </button>
           ) : (
             <button
-              onClick={handleStart}
-              disabled={!input.trim()}
-              className="px-4 py-1.5 bg-accent hover:bg-accent-hover rounded-lg text-white text-sm disabled:opacity-40 transition-colors"
+              onClick={() => void handleStart()}
+              disabled={!input.trim() || createPending}
+              className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white transition-colors hover:bg-accent-hover disabled:opacity-40"
             >
-              開始
+              {createPending ? 'Creating...' : 'Run'}
             </button>
           )}
         </div>
       </div>
 
+      <AgentRunHistory
+        workspaceId={workspaceId}
+        activeRunId={run?.id ?? null}
+        onSelectRun={handleSelectRun}
+      />
+
       {run && (
-        <div className="flex-1 overflow-y-auto space-y-2 min-h-0">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-xs text-text-tertiary font-mono">#{run.id?.slice(0, 8)}</span>
-            <div className="flex items-center gap-1.5">
-              {loading && <div className="w-3 h-3 border border-warning border-t-transparent rounded-full animate-spin" />}
-              <span className={`text-xs font-medium ${STATUS_COLOR[run.status]}`}>
-                {run.status === 'running' ? '執行中...' : run.status === 'done' ? '完成' : '錯誤'}
-              </span>
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+          <div className="rounded-xl border border-border bg-panel p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-mono text-text-tertiary">#{run.id.slice(0, 8)}</p>
+                <p className={`mt-1 text-sm font-medium ${STATUS_COLOR[run.status]}`}>
+                  {STATUS_COPY[run.status]}
+                </p>
+                <p className="mt-1 text-xs text-text-tertiary">{run.inputSummary}</p>
+              </div>
+              <div className="text-right text-xs text-text-tertiary">
+                <p>{new Date(run.createdAt).toLocaleString()}</p>
+                {run.finishedAt && <p className="mt-1">Finished: {new Date(run.finishedAt).toLocaleTimeString()}</p>}
+              </div>
             </div>
+
+            {runtimeError && (
+              <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-xs text-error">
+                {runtimeError}
+              </div>
+            )}
+
+            {run.status === 'queued' && (
+              <p className="mt-3 text-xs text-text-secondary">Run created. Preparing execution.</p>
+            )}
+
+            {run.status === 'running' && (
+              <p className="mt-3 text-xs text-text-secondary">Execution is in progress. Stream events are attached to this run.</p>
+            )}
+
+            {canRetry && (
+              <div className="mt-3">
+                <button
+                  onClick={() => void handleRetry()}
+                  className="rounded-lg border border-accent px-3 py-1.5 text-xs text-accent transition-colors hover:bg-accent-light"
+                >
+                  Retry as new run
+                </button>
+              </div>
+            )}
           </div>
 
-          {run.steps.map((step, index) => (
-            <div key={`${step.name}-${index}`} className="bg-panel border border-border rounded-xl p-3">
+          {run.steps.map((step) => (
+            <div key={step.id || step.stepKey} className="rounded-xl border border-border bg-panel p-3">
               <div className="flex items-center gap-2">
-                {step.status === 'running' ? (
-                  <div className="w-3 h-3 border border-warning border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                ) : (
-                  <span className={`text-sm font-mono flex-shrink-0 ${STATUS_COLOR[step.status]}`}>
-                    {STATUS_ICON[step.status]}
-                  </span>
-                )}
-                <span className="text-xs text-text-secondary flex-1">{step.name}</span>
+                <span className="text-xs font-medium text-text-secondary">{step.name}</span>
+                <span className="text-[11px] text-text-tertiary">{step.status}</span>
               </div>
-              {step.status === 'done' && step.output && (
-                <p className="text-xs text-text-tertiary mt-1.5 line-clamp-2 pl-5">
-                  {typeof step.output === 'string' ? step.output : JSON.stringify(step.output).slice(0, 120)}
+              {step.output != null && (
+                <p className="mt-1.5 line-clamp-2 text-xs text-text-tertiary">
+                  {typeof step.output === 'string' ? step.output : JSON.stringify(step.output).slice(0, 160)}
                 </p>
+              )}
+              {step.error && (
+                <p className="mt-1.5 text-xs text-error">{step.error}</p>
               )}
             </div>
           ))}
 
           {finalAnswer && (
-            <div className="bg-accent-light border border-accent-muted rounded-xl p-3">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-medium text-accent">
-                  {MODE_CONFIG[run.type]?.icon} 最終結果
-                </p>
+            <div className="rounded-xl border border-accent-muted bg-accent-light p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-medium text-accent">Final Output</p>
                 <button
-                  onClick={handleSaveToDoc}
-                  disabled={saved || isAnimating}
-                  className="text-xs px-2 py-0.5 bg-accent-muted hover:bg-accent-light text-accent rounded-lg disabled:opacity-40 transition-colors"
+                  onClick={() => void handleSaveToDoc()}
+                  disabled={saved || isBusy}
+                  className="rounded-lg bg-accent-muted px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent-light disabled:opacity-40"
                 >
-                  {saved ? '已儲存' : '存成文件'}
+                  {saved ? 'Saved' : 'Save to doc'}
                 </button>
               </div>
-              <p className="text-xs text-text-secondary whitespace-pre-wrap leading-relaxed">
-                {finalAnswer}
-                {isAnimating && (
-                  <span className="inline-block w-0.5 h-3.5 bg-accent animate-pulse ml-0.5 align-middle" />
-                )}
-              </p>
+              <p className="whitespace-pre-wrap text-xs leading-relaxed text-text-secondary">{finalAnswer}</p>
             </div>
           )}
         </div>
       )}
 
-      {!run && !loading && (
-        <div className="flex-1 flex items-center justify-center">
+      {!run && !isBusy && (
+        <div className="flex flex-1 items-center justify-center">
           <div className="text-center text-text-tertiary">
-            <div className="text-3xl mb-2">🤖</div>
-            <p className="text-xs">選擇模式並輸入問題</p>
-            <p className="text-xs mt-1 text-text-secondary">按 Cmd/Ctrl+Enter 開始</p>
+            <div className="mb-2 text-3xl">AI</div>
+            <p className="text-xs">Create a run first, then stream and restore it by run ID.</p>
+            <p className="mt-1 text-xs text-text-secondary">Runs remain queryable after reload.</p>
           </div>
         </div>
       )}

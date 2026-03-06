@@ -10,6 +10,9 @@ import {
   type DragEndEvent, type DragOverEvent,
 } from '@dnd-kit/core';
 import { Collection } from '../types/collection';
+import type { WorkspaceMembershipSummary } from '../api/client';
+import { useOptionalAppContext } from '../contexts/AppContext';
+import ForbiddenState from './ForbiddenState';
 
 interface Doc { id: string; title: string; metadata?: any; position?: number; }
 
@@ -40,6 +43,7 @@ interface Props {
   onLogout: () => void;
   onClose?: () => void;
   onOpenCommand?: () => void;
+  workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
 }
 
 function buildTree(docs: Doc[]): TreeNode[] {
@@ -98,6 +102,7 @@ function DocTreeNode({
   node, activeDoc, expandedIds, menuDocId, renamingId, renameVal, renameRef,
   onToggleExpand, onSelectDoc, onStartRename, onSubmitRename, onSetRenameVal,
   onDeleteDoc, onNewChild, onSetMenuDocId, onClose, draggingId, dropInfo,
+  canEditDocuments, canDeleteDocuments,
 }: {
   node: TreeNode;
   activeDoc: any;
@@ -117,6 +122,8 @@ function DocTreeNode({
   onClose?: () => void;
   draggingId: string | null;
   dropInfo: DropInfo | null;
+  canEditDocuments: boolean;
+  canDeleteDocuments: boolean;
 }) {
   const isActive = activeDoc?.id === node.id;
   const isExpanded = expandedIds.has(node.id);

@@ -106,6 +106,37 @@ export async function runColumnMigrations(): Promise<void> {
     `ALTER TABLE documents ALTER COLUMN index_status SET NOT NULL`,
     `ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_index_status_check`,
     `ALTER TABLE documents ADD CONSTRAINT documents_index_status_check CHECK (index_status IN ('pending', 'indexed', 'stale', 'failed'))`,
+    // P1-C: agent run lifecycle columns and status contract
+    `ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS input_summary TEXT`,
+    `ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS output_summary TEXT`,
+    `ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS error_summary TEXT`,
+    `UPDATE agent_runs
+     SET input_summary = LEFT(COALESCE(NULLIF(input_summary, ''), query), 500)
+     WHERE input_summary IS NULL`,
+    `UPDATE agent_runs
+     SET output_summary = LEFT(COALESCE(output_summary, result->>'answer', result::text), 500)
+     WHERE status IN ('done', 'completed')
+       AND output_summary IS NULL`,
+    `UPDATE agent_runs
+     SET error_summary = LEFT(
+       COALESCE(
+         error_summary,
+         NULLIF(error, ''),
+         CASE
+           WHEN status = 'aborted' THEN 'Run interrupted by server restart'
+           ELSE 'Agent run failed'
+         END
+       ),
+       500
+     )
+     WHERE status IN ('error', 'aborted', 'failed')
+       AND error_summary IS NULL`,
+    `UPDATE agent_runs SET status = 'completed' WHERE status = 'done'`,
+    `UPDATE agent_runs SET status = 'failed' WHERE status IN ('error', 'aborted')`,
+    `ALTER TABLE agent_runs ALTER COLUMN started_at DROP DEFAULT`,
+    `ALTER TABLE agent_runs ALTER COLUMN status SET DEFAULT 'queued'`,
+    `ALTER TABLE agent_runs DROP CONSTRAINT IF EXISTS agent_runs_status_check`,
+    `ALTER TABLE agent_runs ADD CONSTRAINT agent_runs_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed'))`,
     // P0: inbox notification type contract for existing databases
     `ALTER TABLE inbox_notifications DROP CONSTRAINT IF EXISTS inbox_notifications_type_check`,
     `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'quota_alert', 'automation'))`,

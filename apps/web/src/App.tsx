@@ -29,12 +29,31 @@ import {
   listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
   getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
   type InboxNotification, type OfflineQueueMetricsSource,
+  type WorkspaceMembershipSummary, type WorkspacePermissionSummary, type WorkspaceRecord,
 } from './api/client';
+
+const DEFAULT_WORKSPACE_PERMISSIONS: WorkspacePermissionSummary = {
+  canViewWorkspace: false,
+  canManageMembers: false,
+  canManageSettings: false,
+  canEditDocuments: false,
+  canDeleteDocuments: false,
+  canRunAutomation: false,
+};
+
+function toWorkspaceMembershipSummary(workspace: WorkspaceRecord | null): WorkspaceMembershipSummary | null {
+  if (!workspace) return null;
+  return {
+    effectiveRole: workspace.effectiveRole,
+    permissions: workspace.permissions,
+    permissionSummary: workspace.permissionSummary,
+  };
+}
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [workspace, setWorkspace] = useState<any>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceRecord | null>(null);
   const [documents, setDocuments] = useState<any[]>([]);
   const [activeDoc, setActiveDoc] = useState<any>(null);
   const [activeCollection, setActiveCollection] = useState<Collection | null>(null);
@@ -63,6 +82,8 @@ export default function App() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingItem, setEditingItem] = useState<CollectionItem | null>(null);
   const [presentationMode, setPresentationMode] = useState(false);
+  const workspaceMembershipSummary = toWorkspaceMembershipSummary(workspace);
+  const workspacePermissions = workspaceMembershipSummary?.permissionSummary ?? DEFAULT_WORKSPACE_PERMISSIONS;
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -130,12 +151,12 @@ export default function App() {
   }, []);
 
   const loadWorkspace = async () => {
-    const { workspaces } = await listWorkspaces() as any;
+    const { workspaces } = await listWorkspaces();
     let ws = workspaces[0];
     const isNew = !ws;
     if (isNew) ws = await createWorkspace('My Workspace');
     setWorkspace(ws);
-    const { documents: docs } = await listDocuments(ws.id) as any;
+    const { documents: docs } = await listDocuments(ws.id);
     setDocuments(docs || []);
     if (docs?.length > 0) setActiveDoc(docs[0]);
     if (isNew) setShowOnboarding(true);
@@ -501,6 +522,8 @@ export default function App() {
     <AppContextProvider value={{
       user,
       workspace,
+      workspacePermissions,
+      workspaceMembershipSummary,
       documents,
       activeDoc,
       setActiveDoc,

@@ -2,7 +2,18 @@ import type { Express, Response } from 'express';
 import { WorkspaceModel } from '../models/workspace.js';
 import { observability } from '../services/observability.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { checkPermission } from '../middleware/rbac.js';
+import { checkWorkspaceCapability } from '../middleware/rbac.js';
+import { getWorkspaceMembershipSummary } from '../lib/workspaceRoles.js';
+
+function withGovernanceSummary<T extends Record<string, any>>(workspace: T, membership: ReturnType<typeof getWorkspaceMembershipSummary>) {
+  if (!membership) return workspace;
+  return {
+    ...workspace,
+    effectiveRole: membership.effectiveRole,
+    permissions: membership.permissions,
+    permissionSummary: membership.permissionSummary,
+  };
+}
 
 export function registerWorkspaceRoutes(app: Express): void {
 
@@ -32,19 +43,20 @@ export function registerWorkspaceRoutes(app: Express): void {
       }
 
       observability.info('Workspace created', { workspaceId: workspace.id, duration: Date.now() - startTime });
-      res.status(201).json(workspace);
+      res.status(201).json(withGovernanceSummary(workspace, getWorkspaceMembershipSummary({
+        legacyWorkspaceRole: 'owner',
+      })));
     } catch (error) {
       observability.error('Workspace creation failed', { error: String(error) });
       res.status(500).json({ error: 'Failed to create workspace' });
     }
   });
 
-  // Get workspace by ID (owner check via RBAC)
-  app.get('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
+  app.get('/api/v1/workspaces/:workspaceId', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
     try {
       const workspace = await WorkspaceModel.findById(req.params.workspaceId);
       if (!workspace) { res.status(404).json({ error: 'Workspace not found' }); return; }
-      res.json(workspace);
+      res.json(withGovernanceSummary(workspace, req.workspaceMembershipSummary ?? null));
     } catch {
       res.status(500).json({ error: 'Failed to get workspace' });
     }
@@ -59,32 +71,49 @@ export function registerWorkspaceRoutes(app: Express): void {
 
       // Query through workspace_members instead of scanning all workspaces
       const result = await pool.query(
-        `SELECT w.* FROM workspaces w
+        `SELECT
+            w.*,
+            m.role AS legacy_role,
+            r.name AS role_name,
+            r.permissions
+         FROM workspaces w
          JOIN workspace_members m ON w.id = m.workspace_id
+         LEFT JOIN roles r ON r.id = m.role_id
          WHERE m.user_id = $1
          ORDER BY w.updated_at DESC
          LIMIT $2 OFFSET $3`,
         [req.userId, parseInt(limit as string), parseInt(offset as string)]
       );
-      res.json({ workspaces: result.rows });
+      res.json({
+        workspaces: result.rows.map((workspace) => withGovernanceSummary(
+          workspace,
+          getWorkspaceMembershipSummary({
+            roleName: workspace.role_name,
+            legacyWorkspaceRole: workspace.legacy_role,
+            permissions: workspace.permissions,
+          })
+        )),
+      });
     } catch {
       res.status(500).json({ error: 'Failed to list workspaces' });
     }
   });
 
-  // Update workspace (admin only)
-  app.put('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
+  app.put('/api/v1/workspaces/:workspaceId', authMiddleware, checkWorkspaceCapability('canManageSettings'), async (req: AuthRequest, res: Response) => {
     try {
       const { name, description, settings } = req.body;
       const workspace = await WorkspaceModel.update(req.params.workspaceId, { name, description, settings });
-      res.json(workspace);
+      if (!workspace) {
+        res.status(404).json({ error: 'Workspace not found' });
+        return;
+      }
+      res.json(withGovernanceSummary(workspace, req.workspaceMembershipSummary ?? null));
     } catch {
       res.status(500).json({ error: 'Failed to update workspace' });
     }
   });
 
-  // Delete workspace (admin only)
-  app.delete('/api/v1/workspaces/:workspaceId', authMiddleware, checkPermission('workspace:admin'), async (req: AuthRequest, res: Response) => {
+  app.delete('/api/v1/workspaces/:workspaceId', authMiddleware, checkWorkspaceCapability('canManageSettings'), async (req: AuthRequest, res: Response) => {
     try {
       await WorkspaceModel.delete(req.params.workspaceId);
       res.json({ message: 'Workspace deleted', workspaceId: req.params.workspaceId });

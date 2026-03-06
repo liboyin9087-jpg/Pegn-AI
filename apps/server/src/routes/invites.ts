@@ -2,7 +2,7 @@ import type { Express, Response } from 'express';
 import crypto from 'node:crypto';
 import { pool } from '../db/client.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { checkPermission } from '../middleware/rbac.js';
+import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { observability } from '../services/observability.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
 
@@ -41,7 +41,7 @@ export function registerInviteRoutes(app: Express): void {
   app.post(
     '/api/v1/workspaces/:workspace_id/invites',
     authMiddleware,
-    checkPermission('workspace:admin'),
+    checkWorkspaceCapability('canManageMembers'),
     async (req: AuthRequest, res: Response) => {
       if (!ensureEnabled(res)) return;
       const p = pool;
@@ -121,7 +121,7 @@ export function registerInviteRoutes(app: Express): void {
   app.get(
     '/api/v1/workspaces/:workspace_id/invites',
     authMiddleware,
-    checkPermission('workspace:admin'),
+    checkWorkspaceCapability('canManageMembers'),
     async (req: AuthRequest, res: Response) => {
       if (!ensureEnabled(res)) return;
       const p = pool;
@@ -160,7 +160,7 @@ export function registerInviteRoutes(app: Express): void {
   app.delete(
     '/api/v1/workspaces/:workspace_id/invites/:invite_id',
     authMiddleware,
-    checkPermission('workspace:admin'),
+    checkWorkspaceCapability('canManageMembers'),
     async (req: AuthRequest, res: Response) => {
       if (!ensureEnabled(res)) return;
       const p = pool;
@@ -202,7 +202,7 @@ export function registerInviteRoutes(app: Express): void {
   app.get(
     '/api/v1/workspaces/:workspace_id/members',
     authMiddleware,
-    checkPermission('collection:view'),
+    checkWorkspaceCapability('canViewWorkspace'),
     async (req: AuthRequest, res: Response) => {
       // Members directory is required by comments/@mention and should not depend on INVITES_V1.
       const p = pool;

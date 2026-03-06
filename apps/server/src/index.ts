@@ -150,7 +150,7 @@ httpServer.listen(apiPort, () => {
 await initDb();
 const recoveredRuns = await recoverRunningRunsOnBoot();
 if (recoveredRuns > 0) {
-  observability.warn('Recovered running agent runs as aborted', { recoveredRuns });
+  observability.warn('Recovered running agent runs as failed', { recoveredRuns });
 }
 startAutomationServices();
 observability.info('Automation engine started');
