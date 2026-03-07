@@ -13,6 +13,7 @@ import { useOptionalAppContext, useRefreshVersion, useWorkspacePermissions } fro
 import SearchEmptyState from './SearchEmptyState';
 import SearchFilterBar, { type SearchTimePreset } from './SearchFilterBar';
 import SearchResultCard from './SearchResultCard';
+import ThreadPanel from './ThreadPanel';
 
 interface Props {
   workspaceId: string;
@@ -56,6 +57,7 @@ export default function SearchPanel({
   const [reindexingDocId, setReindexingDocId] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedTraceJobId, setSelectedTraceJobId] = useState<string | null>(null);
+  const [discussionTarget, setDiscussionTarget] = useState<SearchResponse['items'][number] | null>(null);
 
   const refreshIndexStatus = useCallback(async () => {
     if (!workspaceId) return;
@@ -346,8 +348,34 @@ export default function SearchPanel({
                   }
                   onOpenSurfaceTarget?.(target);
                 }}
+                onDiscuss={(nextResult) => setDiscussionTarget(nextResult)}
               />
             ))}
+          </div>
+        ) : null}
+
+        {discussionTarget ? (
+          <div className="rounded-2xl border border-border bg-surface-secondary p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-text-primary">Discussion</p>
+                <p className="mt-1 text-xs text-text-tertiary">{discussionTarget.title}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDiscussionTarget(null)}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-tertiary"
+              >
+                Close
+              </button>
+            </div>
+            <ThreadPanel
+              workspaceId={workspaceId}
+              targetType="document"
+              targetId={discussionTarget.documentId}
+              title={discussionTarget.title}
+              onOpenSurfaceTarget={onOpenSurfaceTarget}
+            />
           </div>
         ) : null}
 

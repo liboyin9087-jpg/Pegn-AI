@@ -48,6 +48,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerTelemetryRoutes } from './routes/telemetry.js';
 import { registerSavedViewRoutes } from './routes/savedViews.js';
 import { registerThreadsRoutes } from './routes/threads.js';
+import { registerWorkflowActionRoutes } from './routes/workflowActions.js';
 import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { startAutomationServices } from './services/automation.js';
@@ -102,6 +103,7 @@ registerAdminRoutes(app);
 registerTelemetryRoutes(app);
 registerSavedViewRoutes(app);
 registerThreadsRoutes(app);
+registerWorkflowActionRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {

@@ -14,7 +14,13 @@ export type AuditEventType =
   | 'document_reindexed'
   | 'agent_run_rerun'
   | 'automation_triggered'
-  | 'quota_alert_raised';
+  | 'quota_alert_raised'
+  | 'workflow_action_submitted'
+  | 'workflow_action_approved'
+  | 'workflow_action_rejected'
+  | 'workflow_action_cancelled'
+  | 'workflow_action_executed'
+  | 'workflow_action_execution_failed';
 
 export interface AuditLogItem {
   id: string;

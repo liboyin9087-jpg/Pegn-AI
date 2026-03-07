@@ -16,6 +16,7 @@ import {
 } from '../api/client';
 import AgentRunDetailPanel from './AgentRunDetailPanel';
 import AgentRunHistoryList from './AgentRunHistoryList';
+import ThreadPanel from './ThreadPanel';
 import { useOptionalAppContext, useRefreshVersion } from '../contexts/AppContext';
 import ForbiddenState from './ForbiddenState';
 
@@ -145,6 +146,7 @@ export default function AgentPanel({
   const [saved, setSaved] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [streamingAnswer, setStreamingAnswer] = useState('');
+  const [threadOpen, setThreadOpen] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
   const streamingAnswerRef = useRef('');
 
@@ -294,6 +296,10 @@ export default function AgentPanel({
       showFailuresOnly: false,
     });
   }, [appContext, mode, run]);
+
+  useEffect(() => {
+    setThreadOpen(false);
+  }, [run?.runId]);
 
   const handleStart = useCallback(async () => {
     if (!permissions.canRunAutomation || !workspaceId || !input.trim() || createPending) return;
@@ -519,6 +525,13 @@ export default function AgentPanel({
                   Rerun
                 </button>
               ) : null}
+              <button
+                type="button"
+                onClick={() => setThreadOpen((current) => !current)}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-tertiary"
+              >
+                {threadOpen ? 'Hide discussion' : 'Discuss run'}
+              </button>
             </div>
           </div>
 
@@ -529,6 +542,16 @@ export default function AgentPanel({
             onOpenJob={onOpenJob}
             onOpenJobTrace={run.jobTarget && onOpenSurfaceTarget ? () => onOpenSurfaceTarget(run.jobTarget!) : undefined}
           />
+
+          {threadOpen ? (
+            <ThreadPanel
+              workspaceId={workspaceId}
+              targetType="agentRun"
+              targetId={run.runId}
+              title={run.title ?? 'Agent run'}
+              onOpenSurfaceTarget={onOpenSurfaceTarget}
+            />
+          ) : null}
 
           {runSteps.length > 0 ? (
             <div className="space-y-2">

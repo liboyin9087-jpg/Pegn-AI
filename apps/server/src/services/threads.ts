@@ -76,6 +76,7 @@ export interface ThreadSummary {
 export interface ListThreadsOptions {
   workspaceId: string;
   targetType?: CollaborationTargetType | null;
+  targetId?: string | null;
   status?: CollaborationThreadStatus | null;
   assignedToMe?: string | null;
   cursor?: string | null;
@@ -402,6 +403,10 @@ export async function listThreads(options: ListThreadsOptions): Promise<{ items:
   if (options.targetType) {
     clauses.push(`t.target_type = $${idx++}`);
     values.push(options.targetType);
+  }
+  if (options.targetId) {
+    clauses.push(`t.target_id = $${idx++}`);
+    values.push(options.targetId);
   }
   if (options.status) {
     clauses.push(`t.status = $${idx++}`);

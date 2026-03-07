@@ -31,6 +31,8 @@ const baseContext: AppContextValue = {
     canEditDocuments: true,
     canDeleteDocuments: true,
     canRunAutomation: true,
+    canCollaborate: true,
+    canManageAssignments: true,
   },
   workspaceMembershipSummary: null,
   documents: [],
@@ -195,6 +197,8 @@ describe('OperationsPanel', () => {
       canEditDocuments: false,
       canDeleteDocuments: false,
       canRunAutomation: false,
+      canCollaborate: false,
+      canManageAssignments: false,
     });
 
     await screen.findByText('agent_run');

@@ -7,6 +7,7 @@ interface Props {
   result: SearchResultItem;
   onOpenDoc?: (documentId: string) => void;
   onReindex?: (documentId: string) => void;
+  onDiscuss?: (result: SearchResultItem) => void;
   canReindex?: boolean;
   reindexing?: boolean;
   onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
@@ -21,6 +22,7 @@ export default function SearchResultCard({
   result,
   onOpenDoc,
   onReindex,
+  onDiscuss,
   canReindex = false,
   reindexing = false,
   onOpenSurfaceTarget,
@@ -100,6 +102,18 @@ export default function SearchResultCard({
           >
             <RefreshCcw size={12} />
             {reindexing ? 'Reindexing...' : 'Reindex document'}
+          </button>
+        </div>
+      ) : null}
+
+      {onDiscuss ? (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => onDiscuss(result)}
+            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-tertiary"
+          >
+            Discuss
           </button>
         </div>
       ) : null}

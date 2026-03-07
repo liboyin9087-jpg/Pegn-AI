@@ -20,6 +20,7 @@ import JobsTable from './JobsTable';
 import JobStatusBadge from './JobStatusBadge';
 import JobTimeline from './JobTimeline';
 import LoadingSkeleton from './LoadingSkeleton';
+import ThreadPanel from './ThreadPanel';
 
 const STATUS_FILTERS: Array<{ id: 'all' | JobStatus; label: string }> = [
   { id: 'all', label: 'All' },
@@ -64,6 +65,7 @@ export default function OperationsPanel({
   const [events, setEvents] = useState<Awaited<ReturnType<typeof getWorkspaceJobEvents>>['items']>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [threadOpen, setThreadOpen] = useState(false);
 
   const loadJobs = useCallback(async () => {
     setJobsLoading(true);
@@ -138,6 +140,10 @@ export default function OperationsPanel({
       setEvents([]);
     }
   }, [loadJobDetail, savedContext]);
+
+  useEffect(() => {
+    setThreadOpen(false);
+  }, [selectedJob?.id]);
 
   useEffect(() => {
     appContext?.setSurfaceContext?.('operations', {
@@ -274,8 +280,27 @@ export default function OperationsPanel({
               {selectedJob.errorSummary ? (
                 <p className="mt-3 text-xs text-error">{selectedJob.errorSummary}</p>
               ) : null}
+
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setThreadOpen((current) => !current)}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-tertiary"
+                >
+                  {threadOpen ? 'Hide discussion' : 'Discuss job'}
+                </button>
+              </div>
             </div>
             <JobTimeline events={events} />
+            {threadOpen ? (
+              <ThreadPanel
+                workspaceId={workspaceId}
+                targetType="job"
+                targetId={selectedJob.id}
+                title={selectedJob.jobType}
+                onOpenSurfaceTarget={onOpenSurfaceTarget}
+              />
+            ) : null}
           </div>
         ) : null}
 

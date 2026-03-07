@@ -11,6 +11,8 @@ const editorPermissions: WorkspacePermissionSummary = {
   canEditDocuments: true,
   canDeleteDocuments: true,
   canRunAutomation: true,
+  canCollaborate: true,
+  canManageAssignments: true,
 };
 
 function makeJob(overrides: Partial<JobRecord> = {}): JobRecord {

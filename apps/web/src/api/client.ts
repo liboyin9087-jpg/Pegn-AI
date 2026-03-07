@@ -198,6 +198,8 @@ export interface WorkspacePermissionSummary {
   canRunAutomation: boolean;
   canCollaborate: boolean;
   canManageAssignments: boolean;
+  canRequestWorkflowActions: boolean;
+  canApproveWorkflowActions: boolean;
 }
 
 export interface WorkspaceMembershipSummary {
@@ -397,6 +399,64 @@ export interface SavedViewDetail extends SavedViewSummary {
   payload: SavedViewPayload;
 }
 
+export type WorkflowActionType =
+  | 'document_reindex'
+  | 'bulk_document_reindex'
+  | 'agent_rerun'
+  | 'automation_trigger';
+
+export type WorkflowTargetType = 'document' | 'documentSet' | 'agentRun' | 'automation';
+export type WorkflowApprovalMode = 'not_required' | 'single_approver';
+export type WorkflowActionStatus =
+  | 'draft'
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+  | 'executing'
+  | 'executed'
+  | 'execution_failed'
+  | 'cancelled';
+
+export interface WorkflowActorSummary {
+  userId: string | null;
+  displayName: string;
+}
+
+export interface WorkflowApprovalDecision {
+  approvalId: string;
+  approverUserId: string;
+  decision: 'approved' | 'rejected';
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowActionSummary {
+  actionId: string;
+  workspaceId: string;
+  actionType: WorkflowActionType;
+  targetType: WorkflowTargetType;
+  targetId: string;
+  status: WorkflowActionStatus;
+  approvalMode: WorkflowApprovalMode;
+  summary: string;
+  requestedBy: WorkflowActorSummary;
+  approvedBy?: WorkflowActorSummary | null;
+  executedJobId?: string | null;
+  executedRunId?: string | null;
+  executionErrorSummary?: string | null;
+  threadId?: string | null;
+  sourceTarget: SurfaceLinkTarget;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowActionDetail extends WorkflowActionSummary {
+  payload: Record<string, unknown>;
+  rejectedBy?: WorkflowActorSummary | null;
+  cancelledBy?: WorkflowActorSummary | null;
+  approvalHistory: WorkflowApprovalDecision[];
+}
+
 export interface AuditLogItem {
   id: string;
   actorId: string | null;
@@ -411,7 +471,13 @@ export interface AuditLogItem {
     | 'document_reindexed'
     | 'agent_run_rerun'
     | 'automation_triggered'
-    | 'quota_alert_raised';
+    | 'quota_alert_raised'
+    | 'workflow_action_submitted'
+    | 'workflow_action_approved'
+    | 'workflow_action_rejected'
+    | 'workflow_action_cancelled'
+    | 'workflow_action_executed'
+    | 'workflow_action_execution_failed';
   targetType: string;
   targetId: string | null;
   summary: string;
@@ -950,6 +1016,7 @@ export const createOrGetThread = (payload: {
 export const listThreads = (query: {
   workspaceId: string;
   targetType?: CollaborationTargetType;
+  targetId?: string;
   status?: CollaborationThreadStatus;
   assignedToMe?: boolean;
   cursor?: string;
@@ -957,6 +1024,7 @@ export const listThreads = (query: {
 }) => {
   const params = new URLSearchParams({ workspaceId: query.workspaceId });
   if (query.targetType) params.set('targetType', query.targetType);
+  if (query.targetId) params.set('targetId', query.targetId);
   if (query.status) params.set('status', query.status);
   if (query.assignedToMe) params.set('assignedToMe', 'true');
   if (query.cursor) params.set('cursor', query.cursor);
@@ -1203,6 +1271,87 @@ export const cancelWorkspaceJob = (workspaceId: string, jobId: string) =>
     { method: 'POST', body: JSON.stringify({}) }
   );
 
+export const listWorkflowActions = (
+  workspaceId: string,
+  query: {
+    status?: WorkflowActionStatus;
+    actionType?: WorkflowActionType;
+    requestedByMe?: boolean;
+    approvalsPendingForMe?: boolean;
+    cursor?: string;
+    limit?: number;
+  } = {}
+) => {
+  const params = new URLSearchParams();
+  if (query.status) params.set('status', query.status);
+  if (query.actionType) params.set('actionType', query.actionType);
+  if (query.requestedByMe) params.set('requestedByMe', 'true');
+  if (query.approvalsPendingForMe) params.set('approvalsPendingForMe', 'true');
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.limit) params.set('limit', String(query.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return api<{ items: WorkflowActionSummary[]; nextCursor: string | null }>(
+    `/workspaces/${workspaceId}/workflow-actions${suffix}`
+  );
+};
+
+export const getWorkflowActionDetail = (workspaceId: string, actionId: string) =>
+  api<WorkflowActionDetail>(`/workspaces/${workspaceId}/workflow-actions/${actionId}`);
+
+export const createWorkflowAction = (
+  workspaceId: string,
+  payload: {
+    actionType: WorkflowActionType;
+    targetType: WorkflowTargetType;
+    targetId: string;
+    summary?: string;
+    payload?: Record<string, unknown>;
+    threadId?: string | null;
+  }
+) =>
+  api<WorkflowActionDetail>(`/workspaces/${workspaceId}/workflow-actions`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const updateWorkflowAction = (
+  workspaceId: string,
+  actionId: string,
+  payload: {
+    summary?: string;
+    payload?: Record<string, unknown>;
+    threadId?: string | null;
+  }
+) =>
+  api<WorkflowActionDetail>(`/workspaces/${workspaceId}/workflow-actions/${actionId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+export const submitWorkflowAction = (workspaceId: string, actionId: string) =>
+  api<{ actionId: string; status: WorkflowActionStatus; executedJobId?: string | null; executedRunId?: string | null }>(
+    `/workspaces/${workspaceId}/workflow-actions/${actionId}/submit`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const approveWorkflowAction = (workspaceId: string, actionId: string) =>
+  api<{ actionId: string; status: WorkflowActionStatus; executedJobId?: string | null; executedRunId?: string | null }>(
+    `/workspaces/${workspaceId}/workflow-actions/${actionId}/approve`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const rejectWorkflowAction = (workspaceId: string, actionId: string, comment?: string) =>
+  api<{ actionId: string; status: WorkflowActionStatus }>(
+    `/workspaces/${workspaceId}/workflow-actions/${actionId}/reject`,
+    { method: 'POST', body: JSON.stringify(comment ? { comment } : {}) }
+  );
+
+export const cancelWorkflowAction = (workspaceId: string, actionId: string) =>
+  api<{ actionId: string; status: WorkflowActionStatus }>(
+    `/workspaces/${workspaceId}/workflow-actions/${actionId}/cancel`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
 export const triggerAutomationJob = (automationId: string) =>
   api<AutomationTriggerResponse>(`/automations/${automationId}/trigger`, {
     method: 'POST',
@@ -1352,6 +1501,18 @@ export type InboxNotification =
       };
     })
   | (InboxNotificationBase & {
+      type: 'approval_requested' | 'approval_rejected' | 'execution_failed';
+      payload: {
+        action_id?: string;
+        action_type?: WorkflowActionType;
+        summary?: string;
+        execution_error_summary?: string;
+        job_id?: string;
+        run_id?: string;
+        source_target?: SurfaceLinkTarget;
+      };
+    })
+  | (InboxNotificationBase & {
       type: 'unknown';
       payload: {
         title: string;
@@ -1449,6 +1610,24 @@ export function normalizeInboxNotification(notification: RawInboxNotification): 
           ...(typeof payload.entity_id === 'string' ? { entity_id: payload.entity_id } : {}),
           ...(payload.context && typeof payload.context === 'object'
             ? { context: payload.context as Record<string, unknown> }
+            : {}),
+        },
+      };
+    case 'approval_requested':
+    case 'approval_rejected':
+    case 'execution_failed':
+      return {
+        ...base,
+        type: notification.type,
+        payload: {
+          ...(typeof payload.action_id === 'string' ? { action_id: payload.action_id } : {}),
+          ...(typeof payload.action_type === 'string' ? { action_type: payload.action_type as WorkflowActionType } : {}),
+          ...(typeof payload.summary === 'string' ? { summary: payload.summary } : {}),
+          ...(typeof payload.execution_error_summary === 'string' ? { execution_error_summary: payload.execution_error_summary } : {}),
+          ...(typeof payload.job_id === 'string' ? { job_id: payload.job_id } : {}),
+          ...(typeof payload.run_id === 'string' ? { run_id: payload.run_id } : {}),
+          ...(payload.source_target && typeof payload.source_target === 'object'
+            ? { source_target: payload.source_target as SurfaceLinkTarget }
             : {}),
         },
       };

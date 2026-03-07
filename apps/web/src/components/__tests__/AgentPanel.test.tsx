@@ -59,6 +59,8 @@ const adminMembership: WorkspaceMembershipSummary = {
     canEditDocuments: true,
     canDeleteDocuments: true,
     canRunAutomation: true,
+    canCollaborate: true,
+    canManageAssignments: true,
   },
 };
 
@@ -72,6 +74,8 @@ const viewerMembership: WorkspaceMembershipSummary = {
     canEditDocuments: false,
     canDeleteDocuments: false,
     canRunAutomation: false,
+    canCollaborate: false,
+    canManageAssignments: false,
   },
 };
 

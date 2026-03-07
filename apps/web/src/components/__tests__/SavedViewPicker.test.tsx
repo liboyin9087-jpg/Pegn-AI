@@ -29,6 +29,8 @@ function renderWithContext(canManageSettings = true) {
       canEditDocuments: true,
       canDeleteDocuments: true,
       canRunAutomation: true,
+      canCollaborate: true,
+      canManageAssignments: canManageSettings,
     },
     workspaceMembershipSummary: null,
     documents: [],

@@ -255,7 +255,13 @@ export async function runColumnMigrations(): Promise<void> {
          'document_reindexed',
          'agent_run_rerun',
          'automation_triggered',
-         'quota_alert_raised'
+         'quota_alert_raised',
+         'workflow_action_submitted',
+         'workflow_action_approved',
+         'workflow_action_rejected',
+         'workflow_action_cancelled',
+         'workflow_action_executed',
+         'workflow_action_execution_failed'
        )
      )`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_created_at ON audit_logs(workspace_id, created_at DESC)`,
@@ -367,9 +373,62 @@ export async function runColumnMigrations(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_collaboration_threads_workspace_status_updated ON collaboration_threads(workspace_id, status, updated_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_thread_comments_thread_created ON thread_comments(thread_id, created_at ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_thread_assignments_thread_current_created ON thread_assignments(thread_id, is_current, created_at DESC)`,
+    // P3-C: workflow actions + approvals
+    `CREATE TABLE IF NOT EXISTS workflow_actions (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       action_type TEXT NOT NULL,
+       target_type TEXT NOT NULL,
+       target_id TEXT NOT NULL,
+       status TEXT NOT NULL DEFAULT 'draft',
+       approval_mode TEXT NOT NULL,
+       requested_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       submitted_at TIMESTAMP WITH TIME ZONE,
+       approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+       approved_at TIMESTAMP WITH TIME ZONE,
+       rejected_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+       rejected_at TIMESTAMP WITH TIME ZONE,
+       cancelled_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+       cancelled_at TIMESTAMP WITH TIME ZONE,
+       executed_job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
+       executed_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+       execution_error_summary TEXT,
+       summary TEXT NOT NULL,
+       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+       thread_id UUID REFERENCES collaboration_threads(id) ON DELETE SET NULL,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE TABLE IF NOT EXISTS workflow_approvals (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       action_id UUID NOT NULL REFERENCES workflow_actions(id) ON DELETE CASCADE,
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       approver_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       decision TEXT NOT NULL,
+       comment TEXT,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+     )`,
+    `ALTER TABLE workflow_actions DROP CONSTRAINT IF EXISTS workflow_actions_action_type_check`,
+    `ALTER TABLE workflow_actions ADD CONSTRAINT workflow_actions_action_type_check CHECK (action_type IN ('document_reindex', 'bulk_document_reindex', 'agent_rerun', 'automation_trigger'))`,
+    `ALTER TABLE workflow_actions DROP CONSTRAINT IF EXISTS workflow_actions_target_type_check`,
+    `ALTER TABLE workflow_actions ADD CONSTRAINT workflow_actions_target_type_check CHECK (target_type IN ('document', 'documentSet', 'agentRun', 'automation'))`,
+    `ALTER TABLE workflow_actions DROP CONSTRAINT IF EXISTS workflow_actions_status_check`,
+    `ALTER TABLE workflow_actions ADD CONSTRAINT workflow_actions_status_check CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'executing', 'executed', 'execution_failed', 'cancelled'))`,
+    `ALTER TABLE workflow_actions DROP CONSTRAINT IF EXISTS workflow_actions_approval_mode_check`,
+    `ALTER TABLE workflow_actions ADD CONSTRAINT workflow_actions_approval_mode_check CHECK (approval_mode IN ('not_required', 'single_approver'))`,
+    `ALTER TABLE workflow_approvals DROP CONSTRAINT IF EXISTS workflow_approvals_decision_check`,
+    `ALTER TABLE workflow_approvals ADD CONSTRAINT workflow_approvals_decision_check CHECK (decision IN ('approved', 'rejected'))`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_created_at ON workflow_actions(workspace_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_status_created_at ON workflow_actions(workspace_id, status, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_action_type_created_at ON workflow_actions(workspace_id, action_type, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_actions_requested_by_created_at ON workflow_actions(requested_by_user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_actions_target ON workflow_actions(target_type, target_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_workflow_approvals_action_created_at ON workflow_approvals(action_id, created_at DESC)`,
+    `DROP TRIGGER IF EXISTS update_workflow_actions_updated_at ON workflow_actions`,
+    `CREATE TRIGGER update_workflow_actions_updated_at BEFORE UPDATE ON workflow_actions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
     // P0: inbox notification type contract for existing databases
     `ALTER TABLE inbox_notifications DROP CONSTRAINT IF EXISTS inbox_notifications_type_check`,
-    `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation'))`,
+    `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation', 'approval_requested', 'approval_rejected', 'execution_failed'))`,
   ];
   for (const sql of alterations) {
     try {
@@ -390,9 +449,9 @@ export async function checkSchema(): Promise<boolean> {
   try {
     const result = await pool.query(`
       SELECT COUNT(*) as count FROM information_schema.tables
-      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs', 'product_telemetry_events', 'saved_views', 'collaboration_threads', 'thread_comments', 'thread_assignments')
+      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs', 'product_telemetry_events', 'saved_views', 'collaboration_threads', 'thread_comments', 'thread_assignments', 'workflow_actions', 'workflow_approvals')
     `);
-    return parseInt(result.rows[0].count) >= 18;
+    return parseInt(result.rows[0].count) >= 20;
   } catch (error) {
     console.error('[migrations] Failed to check schema:', error);
     return false;

@@ -83,6 +83,11 @@ export function registerThreadsRoutes(app: Express): void {
     const targetType = typeof req.query.targetType === 'string' && isTargetType(req.query.targetType)
       ? req.query.targetType
       : null;
+    const targetId = typeof req.query.targetId === 'string'
+      ? req.query.targetId
+      : typeof req.query.target_id === 'string'
+        ? req.query.target_id
+        : null;
     const status = typeof req.query.status === 'string' && isThreadStatus(req.query.status)
       ? req.query.status
       : null;
@@ -94,6 +99,7 @@ export function registerThreadsRoutes(app: Express): void {
       const response = await listThreads({
         workspaceId,
         targetType,
+        targetId,
         status,
         assignedToMe,
         cursor,

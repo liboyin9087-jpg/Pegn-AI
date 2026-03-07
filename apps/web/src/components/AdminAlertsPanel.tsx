@@ -5,9 +5,11 @@ import EmptyState from './EmptyState';
 export default function AdminAlertsPanel({
   items,
   onOpenTarget,
+  onDiscussAlert,
 }: {
   items: AdminAlert[];
   onOpenTarget: (target: SurfaceLinkTarget) => void;
+  onDiscussAlert?: (alert: AdminAlert) => void;
 }) {
   return (
     <div className="rounded-xl border border-border bg-panel p-3">
@@ -21,21 +23,35 @@ export default function AdminAlertsPanel({
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
-            <button
+            <div
               key={item.id}
-              onClick={() => onOpenTarget(item.target)}
-              className="block w-full rounded-lg border border-border bg-surface px-3 py-2 text-left"
+              className="rounded-lg border border-border bg-surface px-3 py-2"
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
+                <button
+                  type="button"
+                  onClick={() => onOpenTarget(item.target)}
+                  className="min-w-0 flex-1 text-left"
+                >
                   <p className="text-xs font-medium text-text-primary">{item.title}</p>
                   <p className="mt-1 text-[11px] text-text-tertiary">{item.description}</p>
-                </div>
+                </button>
                 <span className={`rounded px-2 py-0.5 text-[10px] uppercase ${item.severity === 'critical' ? 'bg-error/10 text-error' : item.severity === 'warning' ? 'bg-yellow-500/10 text-yellow-700' : 'bg-surface-secondary text-text-secondary'}`}>
                   {item.severity}
                 </span>
               </div>
-            </button>
+              {onDiscussAlert ? (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => onDiscussAlert(item)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary hover:bg-surface-secondary"
+                  >
+                    Discuss
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ))}
         </div>
       )}

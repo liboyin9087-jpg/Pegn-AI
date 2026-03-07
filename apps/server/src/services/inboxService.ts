@@ -41,7 +41,7 @@ type Queryable = Pick<PoolClient, 'query'>;
 export interface CreateInboxNotificationParams {
   workspaceId: string;
   userId: string;
-  type: 'mention' | 'assignment' | 'quota_alert' | 'automation';
+  type: 'mention' | 'assignment' | 'quota_alert' | 'automation' | 'approval_requested' | 'approval_rejected' | 'execution_failed';
   payload: Record<string, unknown>;
   status?: 'unread' | 'read';
   db?: Queryable | null;
@@ -101,6 +101,20 @@ export function buildNotificationSummary(notification: Pick<InboxNotificationRow
       return typeof payload.message === 'string' && payload.message.trim()
         ? payload.message
         : 'An automation-related event requires attention.';
+    case 'approval_requested':
+      return typeof payload.summary === 'string' && payload.summary.trim()
+        ? payload.summary
+        : 'A workflow action is waiting for approval.';
+    case 'approval_rejected':
+      return typeof payload.summary === 'string' && payload.summary.trim()
+        ? payload.summary
+        : 'A workflow action was rejected.';
+    case 'execution_failed':
+      return typeof payload.execution_error_summary === 'string' && payload.execution_error_summary.trim()
+        ? payload.execution_error_summary
+        : typeof payload.summary === 'string' && payload.summary.trim()
+          ? payload.summary
+          : 'A workflow action failed during execution.';
     default:
       return 'Open the related surface for more details.';
   }
@@ -137,6 +151,20 @@ export function buildNotificationTarget(notification: Pick<InboxNotificationRow,
     : typeof context.target_type === 'string'
       ? context.target_type
       : null;
+  const explicitSourceTarget = payload.source_target && typeof payload.source_target === 'object'
+    ? payload.source_target as SurfaceLinkTarget
+    : context.source_target && typeof context.source_target === 'object'
+      ? context.source_target as SurfaceLinkTarget
+      : null;
+
+  if (explicitSourceTarget) {
+    return {
+      sourceTarget: explicitSourceTarget,
+      relatedJobId,
+      relatedRunId,
+      relatedDocumentId,
+    };
+  }
   const targetId = typeof payload.target_id === 'string'
     ? payload.target_id
     : typeof context.target_id === 'string'
@@ -265,6 +293,15 @@ export function buildNotificationTarget(notification: Pick<InboxNotificationRow,
         relatedDocumentId,
       };
     }
+    case 'approval_requested':
+    case 'approval_rejected':
+    case 'execution_failed':
+      return {
+        sourceTarget: createAdminTarget('summary'),
+        relatedJobId,
+        relatedRunId,
+        relatedDocumentId,
+      };
     default:
       return {
         sourceTarget: createSearchTarget({

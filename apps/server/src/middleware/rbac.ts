@@ -23,6 +23,7 @@ type ResourceType =
   | 'document'
   | 'automation'
   | 'agent_run'
+  | 'workflow_action'
   | 'kg_entity'
   | 'comment_thread'
   | 'collaboration_thread'
@@ -64,6 +65,8 @@ const PERMISSION_CAPABILITY_MAP: Record<string, Capability> = {
   'thread:comment': 'canCollaborate',
   'thread:resolve': 'canCollaborate',
   'thread:assign': 'canManageAssignments',
+  'workflow:request': 'canRequestWorkflowActions',
+  'workflow:approve': 'canApproveWorkflowActions',
 };
 
 function getResultRowCount(result: { rowCount?: number | null; rows?: unknown[] }): number {
@@ -131,6 +134,13 @@ async function resolveWorkspaceId(req: AuthRequest, resourceType: ResourceType):
       const runId = req.params.run_id || req.params.runId || req.params.id;
       if (!runId) return undefined;
       const result = await p.query('SELECT workspace_id FROM agent_runs WHERE id = $1', [runId]);
+      return result.rows[0]?.workspace_id;
+    }
+
+    if (resourceType === 'workflow_action') {
+      const actionId = req.params.actionId || req.params.action_id || req.params.id;
+      if (!actionId) return undefined;
+      const result = await p.query('SELECT workspace_id FROM workflow_actions WHERE id = $1', [actionId]);
       return result.rows[0]?.workspace_id;
     }
 

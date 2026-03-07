@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import InboxPanel from '../InboxPanel';
 
 describe('InboxPanel', () => {
-  it('renders mention, quota_alert, automation, and unknown notifications', () => {
+  it('renders mention, assignment, quota_alert, automation, and unknown notifications', () => {
     const onClose = vi.fn();
     const onOpenNotification = vi.fn();
     const onMarkRead = vi.fn();
@@ -28,6 +28,23 @@ describe('InboxPanel', () => {
               comment_id: 'c1',
               mentioned_by: 'u2',
               preview: 'Hello @you',
+            },
+            status: 'unread',
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: 'n-assignment',
+            workspace_id: 'ws1',
+            user_id: 'u1',
+            summary: 'A thread was assigned to you',
+            sourceTarget: { surface: 'operations', payload: { jobId: 'job-9', jobType: 'all' } },
+            type: 'assignment',
+            payload: {
+              summary: 'Thread assignment',
+              message: 'A failed job thread is now assigned to you.',
+              thread_id: 'thread-1',
+              assigned_by_user_id: 'u2',
+              job_id: 'job-9',
             },
             status: 'unread',
             created_at: new Date().toISOString(),
@@ -90,9 +107,10 @@ describe('InboxPanel', () => {
     );
 
     expect(screen.getByText('Inbox')).toBeInTheDocument();
-    expect(screen.getByText('Mention')).toBeInTheDocument();
-    expect(screen.getByText('Quota alert')).toBeInTheDocument();
-    expect(screen.getByText('Automation')).toBeInTheDocument();
+    expect(screen.getAllByText('Mention').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Assignment').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Quota alert').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Automation').length).toBeGreaterThan(0);
     expect(screen.getByText('System notification')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Mark all read'));

@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS inbox_notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation')),
+    type TEXT NOT NULL CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation', 'approval_requested', 'approval_rejected', 'execution_failed')),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL CHECK (status IN ('unread', 'read')) DEFAULT 'unread',
     read_at TIMESTAMP WITH TIME ZONE,
@@ -569,7 +569,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
         'document_reindexed',
         'agent_run_rerun',
         'automation_triggered',
-        'quota_alert_raised'
+        'quota_alert_raised',
+        'workflow_action_submitted',
+        'workflow_action_approved',
+        'workflow_action_rejected',
+        'workflow_action_cancelled',
+        'workflow_action_executed',
+        'workflow_action_execution_failed'
       )
     ),
     target_type TEXT NOT NULL,
@@ -681,6 +687,51 @@ DROP TRIGGER IF EXISTS update_thread_comments_updated_at ON thread_comments;
 CREATE TRIGGER update_thread_comments_updated_at BEFORE UPDATE ON thread_comments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 DROP TRIGGER IF EXISTS update_thread_assignments_updated_at ON thread_assignments;
 CREATE TRIGGER update_thread_assignments_updated_at BEFORE UPDATE ON thread_assignments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS workflow_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL CHECK (action_type IN ('document_reindex', 'bulk_document_reindex', 'agent_rerun', 'automation_trigger')),
+    target_type TEXT NOT NULL CHECK (target_type IN ('document', 'documentSet', 'agentRun', 'automation')),
+    target_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'pending_approval', 'approved', 'rejected', 'executing', 'executed', 'execution_failed', 'cancelled')) DEFAULT 'draft',
+    approval_mode TEXT NOT NULL CHECK (approval_mode IN ('not_required', 'single_approver')),
+    requested_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    submitted_at TIMESTAMP WITH TIME ZONE,
+    approved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    approved_at TIMESTAMP WITH TIME ZONE,
+    rejected_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    rejected_at TIMESTAMP WITH TIME ZONE,
+    cancelled_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    executed_job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    executed_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+    execution_error_summary TEXT,
+    summary TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    thread_id UUID REFERENCES collaboration_threads(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS workflow_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    action_id UUID NOT NULL REFERENCES workflow_actions(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    approver_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+    comment TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_created_at ON workflow_actions(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_status_created_at ON workflow_actions(workspace_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_workspace_action_type_created_at ON workflow_actions(workspace_id, action_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_requested_by_created_at ON workflow_actions(requested_by_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_actions_target ON workflow_actions(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_approvals_action_created_at ON workflow_approvals(action_id, created_at DESC);
+DROP TRIGGER IF EXISTS update_workflow_actions_updated_at ON workflow_actions;
+CREATE TRIGGER update_workflow_actions_updated_at BEFORE UPDATE ON workflow_actions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 
 -- ============================================================

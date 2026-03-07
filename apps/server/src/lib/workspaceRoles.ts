@@ -11,6 +11,8 @@ export interface WorkspacePermissionSummary {
   canRunAutomation: boolean;
   canCollaborate: boolean;
   canManageAssignments: boolean;
+  canRequestWorkflowActions: boolean;
+  canApproveWorkflowActions: boolean;
 }
 
 export interface WorkspaceMembershipSummary {
@@ -37,6 +39,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canRunAutomation: true,
     canCollaborate: true,
     canManageAssignments: true,
+    canRequestWorkflowActions: true,
+    canApproveWorkflowActions: true,
   },
   admin: {
     canViewWorkspace: true,
@@ -47,6 +51,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canRunAutomation: true,
     canCollaborate: true,
     canManageAssignments: true,
+    canRequestWorkflowActions: true,
+    canApproveWorkflowActions: true,
   },
   editor: {
     canViewWorkspace: true,
@@ -57,6 +63,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canRunAutomation: true,
     canCollaborate: true,
     canManageAssignments: true,
+    canRequestWorkflowActions: true,
+    canApproveWorkflowActions: false,
   },
   viewer: {
     canViewWorkspace: true,
@@ -67,6 +75,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canRunAutomation: false,
     canCollaborate: false,
     canManageAssignments: false,
+    canRequestWorkflowActions: false,
+    canApproveWorkflowActions: false,
   },
 };
 
@@ -108,6 +118,12 @@ const CAPABILITY_PERMISSION_MAP: Record<keyof WorkspacePermissionSummary, string
   ],
   canManageAssignments: [
     'thread:assign',
+  ],
+  canRequestWorkflowActions: [
+    'workflow:request',
+  ],
+  canApproveWorkflowActions: [
+    'workflow:approve',
   ],
 };
 

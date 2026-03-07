@@ -72,6 +72,8 @@ function renderWithPermissions(canEditDocuments = false) {
       canEditDocuments,
       canDeleteDocuments: canEditDocuments,
       canRunAutomation: false,
+      canCollaborate: canEditDocuments,
+      canManageAssignments: false,
     },
     workspaceMembershipSummary: null,
     documents: [],

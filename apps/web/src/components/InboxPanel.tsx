@@ -40,6 +40,11 @@ function getNotificationMeta(notification: InboxNotification): { title: string; 
         title: notification.payload.title || 'Quota alert',
         body: notification.summary || notification.payload.message,
       };
+    case 'assignment':
+      return {
+        title: 'Assignment',
+        body: notification.summary || notification.payload.message || notification.payload.summary,
+      };
     case 'automation':
       return {
         title: notification.payload.title || 'Automation update',
@@ -130,6 +135,7 @@ export default function InboxPanel({
                 >
                   <option value="">All types</option>
                   <option value="mention">Mention</option>
+                  <option value="assignment">Assignment</option>
                   <option value="quota_alert">Quota alert</option>
                   <option value="automation">Automation</option>
                   <option value="unknown">Unknown</option>

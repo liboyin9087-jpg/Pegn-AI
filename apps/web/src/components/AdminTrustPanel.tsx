@@ -19,6 +19,7 @@ import AdminSummaryPanel from './AdminSummaryPanel';
 import UsageQuotaPanel from './UsageQuotaPanel';
 import AuditLogList from './AuditLogList';
 import AdminAlertsPanel from './AdminAlertsPanel';
+import ThreadPanel from './ThreadPanel';
 
 export default function AdminTrustPanel({
   workspaceId,
@@ -48,6 +49,7 @@ export default function AdminTrustPanel({
   const [usageHighlighted, setUsageHighlighted] = useState(false);
   const [activeSection, setActiveSection] = useState<'summary' | 'usage' | 'alerts' | 'audit'>('summary');
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
+  const [discussionAlert, setDiscussionAlert] = useState<AdminAlert | null>(null);
   const usageRef = useRef<HTMLDivElement | null>(null);
 
   const loadAdminSurface = useCallback(async () => {
@@ -108,6 +110,10 @@ export default function AdminTrustPanel({
   }, [savedContext]);
 
   useEffect(() => {
+    setDiscussionAlert(null);
+  }, [selectedAlertId]);
+
+  useEffect(() => {
     appContext?.setSurfaceContext?.('admin', {
       section: activeSection,
       auditFilter: null,
@@ -154,51 +160,67 @@ export default function AdminTrustPanel({
           </div>
         ) : null}
         {activeSection === 'alerts' ? (
-          <AdminAlertsPanel
-            items={alerts}
-            onOpenTarget={(target) => {
-              const matchingAlert = alerts.find((item) => item.target.surface === target.surface) ?? null;
-              setSelectedAlertId(matchingAlert?.id ?? selectedAlertId);
-              if (workspaceId && appContext?.user?.id && onOpenSurfaceTarget && target.surface !== 'admin') {
-                const targetId =
-                  'jobId' in target.payload ? target.payload.jobId :
-                  'runId' in target.payload ? target.payload.runId :
-                  'documentId' in target.payload ? target.payload.documentId :
-                  'section' in target.payload ? target.payload.section :
-                  null;
-                void trackProductEvent('alert_opened', {
-                  workspaceId,
-                  userId: appContext.user.id,
-                  surface: 'admin',
-                  targetType: target.surface,
-                  targetId: targetId ?? null,
-                }).catch(() => undefined);
-              }
-              if (target.surface === 'operations') {
-                onOpenOperations();
+          <div className="space-y-3">
+            <AdminAlertsPanel
+              items={alerts}
+              onOpenTarget={(target) => {
+                const matchingAlert = alerts.find((item) => item.target.surface === target.surface) ?? null;
+                setSelectedAlertId(matchingAlert?.id ?? selectedAlertId);
+                setDiscussionAlert(null);
+                if (workspaceId && appContext?.user?.id && onOpenSurfaceTarget && target.surface !== 'admin') {
+                  const targetId =
+                    'jobId' in target.payload ? target.payload.jobId :
+                    'runId' in target.payload ? target.payload.runId :
+                    'documentId' in target.payload ? target.payload.documentId :
+                    'section' in target.payload ? target.payload.section :
+                    null;
+                  void trackProductEvent('alert_opened', {
+                    workspaceId,
+                    userId: appContext.user.id,
+                    surface: 'admin',
+                    targetType: target.surface,
+                    targetId: targetId ?? null,
+                  }).catch(() => undefined);
+                }
+                if (target.surface === 'operations') {
+                  onOpenOperations();
+                  onOpenSurfaceTarget?.(target);
+                  return;
+                }
+                if (target.surface === 'search') {
+                  onOpenSearch();
+                  onOpenSurfaceTarget?.(target);
+                  return;
+                }
+                if (target.surface === 'admin' && target.payload.section === 'usage') {
+                  setActiveSection('usage');
+                  handleFocusUsage();
+                  return;
+                }
                 onOpenSurfaceTarget?.(target);
-                return;
-              }
-              if (target.surface === 'search') {
-                onOpenSearch();
-                onOpenSurfaceTarget?.(target);
-                return;
-              }
-              if (target.surface === 'admin' && target.payload.section === 'usage') {
-                setActiveSection('usage');
-                handleFocusUsage();
-                return;
-              }
-              onOpenSurfaceTarget?.(target);
-            }}
-          />
+              }}
+              onDiscussAlert={(alert) => {
+                setSelectedAlertId(alert.id);
+                setDiscussionAlert(alert);
+              }}
+            />
+            {discussionAlert ? (
+              <ThreadPanel
+                workspaceId={workspaceId}
+                targetType="adminAlert"
+                targetId={discussionAlert.id}
+                title={discussionAlert.title}
+                onOpenSurfaceTarget={onOpenSurfaceTarget}
+              />
+            ) : null}
+          </div>
         ) : null}
         {activeSection === 'audit' ? (
           <AuditLogList items={auditItems} hasMore={Boolean(nextCursor)} onLoadMore={() => { void handleLoadMore(); }} />
         ) : null}
       </div>
     );
-  }, [activeSection, alerts, appContext?.user?.id, auditItems, error, handleFocusUsage, handleLoadMore, loading, nextCursor, onOpenOperations, onOpenSearch, onOpenSurfaceTarget, permissions.canManageSettings, selectedAlertId, summary, usage, usageHighlighted, workspaceId]);
+  }, [activeSection, alerts, appContext?.user?.id, auditItems, discussionAlert, error, handleFocusUsage, handleLoadMore, loading, nextCursor, onOpenOperations, onOpenSearch, onOpenSurfaceTarget, permissions.canManageSettings, selectedAlertId, summary, usage, usageHighlighted, workspaceId]);
 
   return <div className="space-y-3 bg-surface p-3">{content}</div>;
 }
