@@ -1,32 +1,14 @@
 import React from 'react';
-import type { AdminAlert } from '../api/client';
+import type { AdminAlert, SurfaceLinkTarget } from '../api/client';
 import EmptyState from './EmptyState';
 
 export default function AdminAlertsPanel({
   items,
-  onOpenOperations,
-  onOpenSearch,
-  onFocusUsage,
+  onOpenTarget,
 }: {
   items: AdminAlert[];
-  onOpenOperations: () => void;
-  onOpenSearch: () => void;
-  onFocusUsage: () => void;
+  onOpenTarget: (target: SurfaceLinkTarget) => void;
 }) {
-  const handleOpen = (alert: AdminAlert) => {
-    if (alert.relatedTargetType === 'job') {
-      onOpenOperations();
-      return;
-    }
-    if (alert.relatedTargetType === 'search') {
-      onOpenSearch();
-      return;
-    }
-    if (alert.relatedTargetType === 'quota') {
-      onFocusUsage();
-    }
-  };
-
   return (
     <div className="rounded-xl border border-border bg-panel p-3">
       <div className="mb-3">
@@ -41,7 +23,7 @@ export default function AdminAlertsPanel({
           {items.map((item) => (
             <button
               key={item.id}
-              onClick={() => handleOpen(item)}
+              onClick={() => onOpenTarget(item.target)}
               className="block w-full rounded-lg border border-border bg-surface px-3 py-2 text-left"
             >
               <div className="flex items-start justify-between gap-3">

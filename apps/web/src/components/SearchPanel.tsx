@@ -4,10 +4,12 @@ import {
   getSearchIndexStatus,
   reindexSearchDocument,
   search,
+  trackProductEvent,
   type SearchIndexStatusResponse,
   type SearchResponse,
+  type SurfaceLinkTarget,
 } from '../api/client';
-import { useWorkspacePermissions } from '../contexts/AppContext';
+import { useOptionalAppContext, useRefreshVersion, useWorkspacePermissions } from '../contexts/AppContext';
 import SearchEmptyState from './SearchEmptyState';
 import SearchFilterBar, { type SearchTimePreset } from './SearchFilterBar';
 import SearchResultCard from './SearchResultCard';
@@ -16,6 +18,8 @@ interface Props {
   workspaceId: string;
   onNavigateDoc?: (docId: string) => void;
   onOpenOperations?: () => void;
+  navigationTarget?: SurfaceLinkTarget | null;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }
 
 function getUpdatedFrom(preset: SearchTimePreset): string | undefined {
@@ -26,8 +30,17 @@ function getUpdatedFrom(preset: SearchTimePreset): string | undefined {
   return now.toISOString();
 }
 
-export default function SearchPanel({ workspaceId, onNavigateDoc, onOpenOperations }: Props) {
+export default function SearchPanel({
+  workspaceId,
+  onNavigateDoc,
+  onOpenOperations,
+  navigationTarget,
+  onOpenSurfaceTarget,
+}: Props) {
   const permissions = useWorkspacePermissions();
+  const appContext = useOptionalAppContext();
+  const refreshVersion = useRefreshVersion('search');
+  const savedContext = appContext?.surfaceContexts.search;
   const [draftQuery, setDraftQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -74,12 +87,38 @@ export default function SearchPanel({ workspaceId, onNavigateDoc, onOpenOperatio
         });
         setResponse(nextResponse);
         setResults((prev) => (nextCursor ? [...prev, ...nextResponse.items] : nextResponse.items));
+        if (!nextCursor && appContext?.user?.id) {
+          void trackProductEvent('search_performed', {
+            workspaceId,
+            userId: appContext.user.id,
+            surface: 'search',
+            targetType: 'query',
+            targetId: submittedQuery,
+            metadata: {
+              normalizedQuery: nextResponse.normalizedQuery,
+              total: nextResponse.total,
+              hasFilters: Boolean(typeFilter || sourceFilter || timePreset !== 'all'),
+            },
+          }).catch(() => undefined);
+          if (nextResponse.total === 0) {
+            void trackProductEvent('search_no_result', {
+              workspaceId,
+              userId: appContext.user.id,
+              surface: 'search',
+              targetType: 'query',
+              targetId: submittedQuery,
+              metadata: {
+                normalizedQuery: nextResponse.normalizedQuery,
+              },
+            }).catch(() => undefined);
+          }
+        }
       } finally {
         setLoading(false);
         setLoadingMore(false);
       }
     },
-    [sourceFilter, submittedQuery, timePreset, typeFilter, workspaceId]
+    [appContext?.user?.id, sourceFilter, submittedQuery, timePreset, typeFilter, workspaceId]
   );
 
   useEffect(() => {
@@ -89,7 +128,40 @@ export default function SearchPanel({ workspaceId, onNavigateDoc, onOpenOperatio
       return;
     }
     void runSearch(cursor);
-  }, [cursor, runSearch, searchNonce, submittedQuery]);
+  }, [cursor, refreshVersion, runSearch, searchNonce, submittedQuery]);
+
+  useEffect(() => {
+    if (!navigationTarget || navigationTarget.surface !== 'search') return;
+    const nextQuery = navigationTarget.payload.query ?? navigationTarget.context?.query ?? '';
+    if (nextQuery) {
+      setDraftQuery(nextQuery);
+      setSubmittedQuery(nextQuery);
+      setCursor(null);
+      setSearchNonce((current) => current + 1);
+    }
+  }, [navigationTarget]);
+
+  useEffect(() => {
+    if (!savedContext) return;
+    setDraftQuery(savedContext.query ?? '');
+    setSubmittedQuery(savedContext.query ?? '');
+    setTypeFilter(savedContext.type ?? '');
+    setSourceFilter(savedContext.source ?? '');
+    setTimePreset(savedContext.updatedRange ?? 'all');
+    setCursor(null);
+  }, [savedContext]);
+
+  useEffect(() => {
+    appContext?.setSurfaceContext('search', {
+      query: submittedQuery,
+      type: typeFilter || null,
+      source: sourceFilter || null,
+      updatedRange: timePreset,
+      staleOnly: false,
+      selectedDocumentId: null,
+      selectedTraceJobId: null,
+    });
+  }, [appContext, sourceFilter, submittedQuery, timePreset, typeFilter]);
 
   const submitSearch = useCallback(() => {
     const next = draftQuery.trim();
@@ -109,14 +181,40 @@ export default function SearchPanel({ workspaceId, onNavigateDoc, onOpenOperatio
     async (documentId: string) => {
       setReindexingDocId(documentId);
       try {
-        await reindexSearchDocument(documentId);
+        const reindexResponse = await reindexSearchDocument(documentId);
+        if (workspaceId && appContext?.user?.id) {
+          void trackProductEvent('reindex_triggered', {
+            workspaceId,
+            userId: appContext.user.id,
+            surface: 'search',
+            targetType: 'document',
+            targetId: documentId,
+            metadata: {
+              jobId: reindexResponse.jobId,
+            },
+          }).catch(() => undefined);
+        }
+        appContext?.requestRefresh(['search', 'jobs', 'admin', 'audit', 'inbox']);
         await Promise.all([runSearch(null), refreshIndexStatus()]);
-        onOpenOperations?.();
+        if (reindexResponse.jobId && onOpenSurfaceTarget) {
+          onOpenSurfaceTarget({
+            surface: 'operations',
+            payload: {
+              jobId: reindexResponse.jobId,
+              jobType: 'document_reindex',
+              resourceType: 'document',
+              resourceId: documentId,
+            },
+            context: { filter: 'document_reindex' },
+          });
+        } else {
+          onOpenOperations?.();
+        }
       } finally {
         setReindexingDocId(null);
       }
     },
-    [onOpenOperations, refreshIndexStatus, runSearch]
+    [appContext, onOpenOperations, onOpenSurfaceTarget, refreshIndexStatus, runSearch, workspaceId]
   );
 
   const filtersAppliedText = useMemo(() => {
@@ -219,6 +317,7 @@ export default function SearchPanel({ workspaceId, onNavigateDoc, onOpenOperatio
                 onReindex={permissions.canEditDocuments ? handleReindex : undefined}
                 canReindex={permissions.canEditDocuments}
                 reindexing={reindexingDocId === result.documentId}
+                onOpenSurfaceTarget={onOpenSurfaceTarget}
               />
             ))}
           </div>

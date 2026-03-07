@@ -17,6 +17,8 @@ const result = {
   isStale: true,
   staleReason: 'document_updated_after_index' as const,
   score: 0.91,
+  documentTarget: { surface: 'document' as const, payload: { documentId: 'doc-1' } },
+  traceTarget: { surface: 'operations' as const, payload: { jobId: 'job-1', jobType: 'document_reindex' as const } },
 };
 
 describe('SearchResultCard', () => {

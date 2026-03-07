@@ -51,6 +51,16 @@ const baseContext: AppContextValue = {
   openTaskModal: vi.fn(),
   openEditModal: vi.fn(),
   closeTaskModal: vi.fn(),
+  openSurfaceTarget: vi.fn(),
+  requestRefresh: vi.fn(),
+  refreshVersions: {
+    search: 0,
+    agentRuns: 0,
+    jobs: 0,
+    admin: 0,
+    audit: 0,
+    inbox: 0,
+  },
 };
 
 function renderPanel(permissions = baseContext.workspacePermissions) {

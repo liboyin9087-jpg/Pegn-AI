@@ -29,23 +29,23 @@ function getNotificationMeta(notification: InboxNotification): { title: string; 
   switch (notification.type) {
     case 'mention':
       return {
-        title: '提及你於留言串',
-        body: notification.payload.preview || '查看留言內容',
+        title: 'Mention',
+        body: notification.summary || notification.payload.preview || 'You were mentioned in a comment thread.',
       };
     case 'quota_alert':
       return {
-        title: notification.payload.title || 'Quota 警告',
-        body: notification.payload.message,
+        title: notification.payload.title || 'Quota alert',
+        body: notification.summary || notification.payload.message,
       };
     case 'automation':
       return {
-        title: notification.payload.title || 'Automation',
-        body: notification.payload.message,
+        title: notification.payload.title || 'Automation update',
+        body: notification.summary || notification.payload.message,
       };
     case 'unknown':
       return {
-        title: notification.payload.title || '系統通知',
-        body: notification.payload.message || '收到未識別的通知。',
+        title: notification.payload.title || 'System notification',
+        body: notification.summary || notification.payload.message || 'Open this notification to inspect the related surface.',
       };
   }
 }
@@ -62,12 +62,12 @@ export default function InboxPanel({
 }: Props) {
   return (
     <AnimatePresence>
-      {open && (
+      {open ? (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 bg-black/25 backdrop-blur-sm flex items-start justify-center p-4"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 p-4 backdrop-blur-sm"
           onClick={onClose}
         >
           <motion.div
@@ -75,33 +75,35 @@ export default function InboxPanel({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ duration: 0.15 }}
-            className="w-full max-w-xl mt-10 rounded-2xl border border-border bg-surface shadow-2xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
+            className="mt-10 w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <div className="flex items-center gap-2">
                 <Bell size={16} className="text-text-tertiary" />
                 <h3 className="text-sm font-semibold text-text-primary">Inbox</h3>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent">{unreadCount}</span>
+                <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">{unreadCount}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={onMarkAllRead}
-                  className="text-xs px-2.5 py-1 rounded-md border border-border text-text-secondary hover:bg-surface-secondary transition-colors flex items-center gap-1"
+                  className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-secondary"
                   disabled={unreadCount === 0}
                 >
                   <CheckCheck size={12} />
-                  全部標記已讀
+                  Mark all read
                 </button>
-                <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">關閉</button>
+                <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
+                  Close
+                </button>
               </div>
             </div>
 
             <div className="max-h-[70vh] overflow-y-auto">
               {loading ? (
-                <div className="p-6 text-sm text-text-tertiary">載入通知中...</div>
+                <div className="p-6 text-sm text-text-tertiary">Loading notifications...</div>
               ) : notifications.length === 0 ? (
-                <div className="p-8 text-center text-sm text-text-tertiary">目前沒有通知</div>
+                <div className="p-8 text-center text-sm text-text-tertiary">No notifications yet.</div>
               ) : (
                 <div className="divide-y divide-border">
                   {notifications.map((notification) => {
@@ -110,41 +112,39 @@ export default function InboxPanel({
                       <div
                         key={notification.id}
                         onClick={() => onOpenNotification(notification)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
                             onOpenNotification(notification);
                           }
                         }}
                         role="button"
                         tabIndex={0}
-                        className="w-full text-left px-5 py-4 hover:bg-surface-secondary transition-colors cursor-pointer"
+                        className="w-full cursor-pointer px-5 py-4 text-left transition-colors hover:bg-surface-secondary"
                       >
                         <div className="flex items-start gap-3">
                           <div
-                            className="mt-1 w-2 h-2 rounded-full flex-shrink-0"
+                            className="mt-1 h-2 w-2 flex-shrink-0 rounded-full"
                             style={{ background: notification.status === 'unread' ? 'var(--color-accent)' : 'transparent' }}
                           />
-                          <div className="flex-1 min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm text-text-primary font-medium">{meta.title}</p>
+                              <p className="text-sm font-medium text-text-primary">{meta.title}</p>
                               <span className="text-[11px] text-text-quaternary">{formatTime(notification.created_at)}</span>
                             </div>
-                            <p className="mt-1 text-xs text-text-secondary line-clamp-2">
-                              {meta.body}
-                            </p>
+                            <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{meta.body}</p>
                           </div>
-                          {notification.status === 'unread' && (
+                          {notification.status === 'unread' ? (
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 onMarkRead(notification.id);
                               }}
-                              className="text-[11px] px-2 py-1 rounded-md border border-border text-text-secondary hover:bg-surface"
+                              className="rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface"
                             >
-                              標記已讀
+                              Mark read
                             </button>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -154,7 +154,7 @@ export default function InboxPanel({
             </div>
           </motion.div>
         </motion.div>
-      )}
+      ) : null}
     </AnimatePresence>
   );
 }

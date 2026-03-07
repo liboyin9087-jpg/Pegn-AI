@@ -38,12 +38,15 @@ import { registerOAuthRoutes } from './routes/oauth.js';
 import { registerCollectionRoutes } from './routes/collections.js';
 import { registerCollectionViewRoutes } from './routes/collection_views.js';
 import { registerInviteRoutes } from './routes/invites.js';
-import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js';
+import { registerCommentRoutes } from './routes/comments.js';
+import { registerInboxRoutes } from './routes/inbox.js';
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerAutomationRoutes } from './routes/automations.js';
 import { registerJobsRoutes } from './routes/jobs.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerTelemetryRoutes } from './routes/telemetry.js';
+import { registerSavedViewRoutes } from './routes/savedViews.js';
 import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { startAutomationServices } from './services/automation.js';
@@ -95,6 +98,8 @@ registerBillingRoutes(app);
 registerAutomationRoutes(app);
 registerJobsRoutes(app);
 registerAdminRoutes(app);
+registerTelemetryRoutes(app);
+registerSavedViewRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {

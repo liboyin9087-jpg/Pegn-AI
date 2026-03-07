@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileText, RefreshCcw } from 'lucide-react';
-import type { SearchResultItem } from '../api/client';
+import type { SearchResultItem, SurfaceLinkTarget } from '../api/client';
 import SearchFreshnessBadge from './SearchFreshnessBadge';
 
 interface Props {
@@ -9,6 +9,7 @@ interface Props {
   onReindex?: (documentId: string) => void;
   canReindex?: boolean;
   reindexing?: boolean;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }
 
 function formatDate(value: string | null) {
@@ -22,6 +23,7 @@ export default function SearchResultCard({
   onReindex,
   canReindex = false,
   reindexing = false,
+  onOpenSurfaceTarget,
 }: Props) {
   return (
     <article className="rounded-2xl border border-border bg-panel p-4 shadow-sm">
@@ -29,7 +31,13 @@ export default function SearchResultCard({
         <div className="min-w-0 flex-1">
           <button
             type="button"
-            onClick={() => onOpenDoc?.(result.documentId)}
+            onClick={() => {
+              if (result.documentTarget && onOpenSurfaceTarget) {
+                onOpenSurfaceTarget(result.documentTarget);
+                return;
+              }
+              onOpenDoc?.(result.documentId);
+            }}
             className="block max-w-full truncate text-left text-sm font-semibold text-accent hover:underline"
           >
             {result.title}
@@ -71,6 +79,15 @@ export default function SearchResultCard({
         <span>Indexed {formatDate(result.indexedAt)}</span>
         <span>Updated {formatDate(result.updatedAt)}</span>
         {result.staleReason ? <span>Reason {result.staleReason}</span> : null}
+        {result.traceTarget && onOpenSurfaceTarget ? (
+          <button
+            type="button"
+            onClick={() => onOpenSurfaceTarget(result.traceTarget!)}
+            className="rounded-full border border-border px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:bg-surface-tertiary"
+          >
+            View trace
+          </button>
+        ) : null}
       </div>
 
       {canReindex && result.isStale && onReindex ? (

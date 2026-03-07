@@ -583,6 +583,54 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_created_at ON audit_logs(wor
 CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_event_created_at ON audit_logs(workspace_id, event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created_at ON audit_logs(target_type, target_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS product_telemetry_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_name TEXT NOT NULL CHECK (
+      event_name IN (
+        'search_performed',
+        'search_no_result',
+        'reindex_triggered',
+        'agent_run_created',
+        'agent_rerun_clicked',
+        'job_retry_clicked',
+        'alert_opened',
+        'notification_opened'
+      )
+    ),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    surface TEXT NOT NULL CHECK (surface IN ('search', 'agent', 'operations', 'admin', 'document', 'inbox')),
+    target_type TEXT,
+    target_id TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_telemetry_workspace_created_at ON product_telemetry_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_telemetry_event_created_at ON product_telemetry_events(event_name, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS saved_views (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+    surface TEXT NOT NULL CHECK (surface IN ('search', 'operations', 'agent', 'inbox', 'admin')),
+    name TEXT NOT NULL,
+    description TEXT,
+    context_version INTEGER NOT NULL DEFAULT 1,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_pinned BOOLEAN NOT NULL DEFAULT false,
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_surface_created_at ON saved_views(workspace_id, surface, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_saved_views_owner_workspace_surface_created_at ON saved_views(owner_user_id, workspace_id, surface, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_scope_surface_pinned_created_at ON saved_views(workspace_id, scope, surface, is_pinned, created_at DESC);
+DROP TRIGGER IF EXISTS update_saved_views_updated_at ON saved_views;
+CREATE TRIGGER update_saved_views_updated_at BEFORE UPDATE ON saved_views FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 
 -- ============================================================
 -- Phase 4: Document position for sidebar ordering

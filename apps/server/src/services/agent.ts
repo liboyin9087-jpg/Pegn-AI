@@ -17,6 +17,7 @@ import {
   succeedJob,
   type JobRecord,
 } from './jobService.js';
+import { createAgentTarget, createOperationsTarget, type SurfaceLinkTarget } from './surfaceTargets.js';
 
 const genAI = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -127,6 +128,7 @@ export interface AgentRunDetail {
   errorCode?: string | null;
   errorSummary?: string | null;
   jobId?: string | null;
+  jobTarget?: SurfaceLinkTarget | null;
   promptVersion?: string | null;
   promptLabel?: string | null;
   templateId?: string | null;
@@ -1008,6 +1010,14 @@ function toAgentRunDetail(run: AgentRun): AgentRunDetail {
     errorCode: run.status === 'failed' ? 'agent_run_failed' : null,
     errorSummary: run.errorSummary ?? null,
     jobId: run.jobId ?? run.lastJobId ?? null,
+    jobTarget: (run.jobId ?? run.lastJobId)
+      ? createOperationsTarget({
+          jobId: run.jobId ?? run.lastJobId ?? undefined,
+          jobType: 'agent_run',
+          resourceType: 'agent_run',
+          resourceId: run.id,
+        })
+      : createAgentTarget({ runId: run.id }),
     promptVersion: run.promptVersion ?? null,
     promptLabel: run.promptLabel ?? null,
     templateId: run.templateId ?? null,

@@ -1,5 +1,18 @@
 import React, { createContext, useContext } from 'react';
-import type { WorkspaceMembershipSummary, WorkspacePermissionSummary, WorkspaceRecord } from '../api/client';
+import type {
+  AdminViewPayload,
+  AgentViewPayload,
+  InboxViewPayload,
+  OperationsViewPayload,
+  SavedViewDetail,
+  SavedViewPayload,
+  SavedViewSurface,
+  SearchViewPayload,
+  SurfaceLinkTarget,
+  WorkspaceMembershipSummary,
+  WorkspacePermissionSummary,
+  WorkspaceRecord,
+} from '../api/client';
 import type { Collection } from '../types/collection';
 
 export interface CollectionItem {
@@ -31,7 +44,22 @@ export interface AppContextValue {
   openTaskModal: () => void;
   openEditModal: (item: CollectionItem) => void;
   closeTaskModal: () => void;
+  openSurfaceTarget: (target: SurfaceLinkTarget) => void;
+  requestRefresh: (domains: RefreshDomain[]) => void;
+  refreshVersions: Record<RefreshDomain, number>;
+  surfaceContexts: {
+    search: SearchViewPayload | null;
+    operations: OperationsViewPayload | null;
+    agent: AgentViewPayload | null;
+    inbox: InboxViewPayload | null;
+    admin: AdminViewPayload | null;
+  };
+  setSurfaceContext: (surface: SavedViewSurface, payload: SavedViewPayload) => void;
+  captureCurrentSurfaceContext: (surface: SavedViewSurface) => SavedViewPayload | null;
+  applySavedView: (view: SavedViewDetail) => void;
 }
+
+export type RefreshDomain = 'search' | 'agentRuns' | 'jobs' | 'admin' | 'audit' | 'inbox';
 
 const DEFAULT_WORKSPACE_PERMISSIONS: WorkspacePermissionSummary = {
   canViewWorkspace: false,
@@ -68,4 +96,8 @@ export function useOptionalAppContext(): AppContextValue | null {
 
 export function useWorkspacePermissions(): WorkspacePermissionSummary {
   return useOptionalAppContext()?.workspacePermissions ?? DEFAULT_WORKSPACE_PERMISSIONS;
+}
+
+export function useRefreshVersion(domain: RefreshDomain): number {
+  return useOptionalAppContext()?.refreshVersions[domain] ?? 0;
 }

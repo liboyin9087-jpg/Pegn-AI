@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { pool } from '../db/client.js';
 import { getWorkspaceJobSummary, type WorkspaceJobSummary } from './jobService.js';
 import { searchService } from './search.js';
+import { createAdminTarget, createOperationsTarget, createSearchTarget, type SurfaceLinkTarget } from './surfaceTargets.js';
 
 export type AuditEventType =
   | 'workspace_updated'
@@ -58,6 +59,7 @@ export interface AdminAlert {
   severity: 'info' | 'warning' | 'critical';
   title: string;
   description: string;
+  target: SurfaceLinkTarget;
   relatedTargetType: string | null;
   relatedTargetId: string | null;
   createdAt: string;
@@ -386,6 +388,10 @@ export async function getWorkspaceAdminAlerts(workspaceId: string): Promise<{ it
       severity: usageSummary.failedJobsLast7d >= 10 ? 'critical' : 'warning',
       title: 'Recent failed jobs spike',
       description: `${usageSummary.failedJobsLast7d} jobs failed in the last 7 days.`,
+      target: createOperationsTarget({
+        jobType: 'all',
+        filter: 'failed',
+      }),
       relatedTargetType: 'job',
       relatedTargetId: jobsSummary.latestFailedAt ?? null,
       createdAt: jobsSummary.latestFailedAt ?? now,
@@ -399,6 +405,9 @@ export async function getWorkspaceAdminAlerts(workspaceId: string): Promise<{ it
       severity: 'warning',
       title: 'Stale documents present',
       description: `${searchSummary.staleDocuments} documents need reindexing.`,
+      target: createSearchTarget({
+        filter: 'stale',
+      }),
       relatedTargetType: 'search',
       relatedTargetId: workspaceId,
       createdAt: now,
@@ -412,6 +421,9 @@ export async function getWorkspaceAdminAlerts(workspaceId: string): Promise<{ it
       severity: 'critical',
       title: 'Indexing failures present',
       description: `${searchSummary.failedDocuments} documents are in failed indexing state.`,
+      target: createSearchTarget({
+        filter: 'failed',
+      }),
       relatedTargetType: 'search',
       relatedTargetId: workspaceId,
       createdAt: now,
@@ -425,6 +437,7 @@ export async function getWorkspaceAdminAlerts(workspaceId: string): Promise<{ it
       severity: usageSummary.quotaStatus === 'exceeded' ? 'critical' : 'warning',
       title: 'Quota threshold reached',
       description: `Workspace usage is at ${usageSummary.quota.percentUsed}% of the current tracked quota.`,
+      target: createAdminTarget('usage'),
       relatedTargetType: 'quota',
       relatedTargetId: workspaceId,
       createdAt: now,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, MessageSquare, Search, Bot, GitFork, Zap, Sparkles, Shield } from 'lucide-react';
 import GraphRAGChat from './GraphRAGChat';
@@ -9,7 +9,7 @@ import AutomationPanel from './AutomationPanel';
 import OperationsPanel from './OperationsPanel';
 import AdminTrustPanel from './AdminTrustPanel';
 import { useWorkspacePermissions } from '../contexts/AppContext';
-import type { JobType } from '../api/client';
+import type { JobType, SurfaceLinkTarget } from '../api/client';
 
 type Tab = 'chat' | 'search' | 'agent' | 'kg' | 'automation' | 'operations' | 'admin';
 
@@ -31,6 +31,8 @@ interface Props {
   onNavigateDoc?: (id: string) => void;
   defaultTab?: Tab;
   initialPrompt?: string;
+  navigationTarget?: SurfaceLinkTarget | null;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }
 
 export default function AiSheet({
@@ -40,6 +42,8 @@ export default function AiSheet({
   activeDoc,
   onNavigateDoc,
   defaultTab = 'chat',
+  navigationTarget,
+  onOpenSurfaceTarget,
 }: Props) {
   const workspacePermissions = useWorkspacePermissions();
   const [tab, setTab] = useState<Tab>(defaultTab);
@@ -51,6 +55,38 @@ export default function AiSheet({
     setOperationsType(options?.jobType ?? 'all');
     setTab('operations');
   };
+
+  useEffect(() => {
+    if (!navigationTarget) return;
+    switch (navigationTarget.surface) {
+      case 'search':
+        setTab('search');
+        return;
+      case 'agent':
+        setTab('agent');
+        return;
+      case 'operations':
+        setSelectedJobId(navigationTarget.payload.jobId ?? null);
+        setOperationsType(navigationTarget.payload.jobType ?? 'all');
+        setTab('operations');
+        return;
+      case 'admin':
+        if (workspacePermissions.canManageSettings) {
+          setTab('admin');
+        }
+        return;
+      case 'document':
+        if (navigationTarget.payload.documentId && onNavigateDoc) {
+          onNavigateDoc(navigationTarget.payload.documentId);
+          onClose();
+        }
+        return;
+      case 'inbox':
+        return;
+      default:
+        return;
+    }
+  }, [navigationTarget, onClose, onNavigateDoc, workspacePermissions.canManageSettings]);
 
   const visibleTabs = workspacePermissions.canManageSettings
     ? TABS
@@ -152,6 +188,8 @@ export default function AiSheet({
                       workspaceId={workspaceId}
                       onNavigateDoc={onNavigateDoc}
                       onOpenOperations={() => openOperations({ jobType: 'document_reindex' })}
+                      navigationTarget={navigationTarget?.surface === 'search' ? navigationTarget : null}
+                      onOpenSurfaceTarget={onOpenSurfaceTarget}
                     />
                   ) : null}
                   {tab === 'agent' && workspaceId ? (
@@ -159,6 +197,8 @@ export default function AiSheet({
                       workspaceId={workspaceId}
                       activeDoc={activeDoc}
                       onOpenJob={(jobId) => openOperations({ jobId, jobType: 'agent_run' })}
+                      navigationTarget={navigationTarget?.surface === 'agent' ? navigationTarget : null}
+                      onOpenSurfaceTarget={onOpenSurfaceTarget}
                     />
                   ) : null}
                   {tab === 'kg' && workspaceId ? <KGPanel workspaceId={workspaceId} activeDoc={activeDoc} /> : null}
@@ -173,6 +213,8 @@ export default function AiSheet({
                       workspaceId={workspaceId}
                       selectedJobId={selectedJobId}
                       initialJobType={operationsType}
+                      navigationTarget={navigationTarget?.surface === 'operations' ? navigationTarget : null}
+                      onOpenSurfaceTarget={onOpenSurfaceTarget}
                     />
                   ) : null}
                   {tab === 'admin' && workspaceId ? (
@@ -180,6 +222,8 @@ export default function AiSheet({
                       workspaceId={workspaceId}
                       onOpenOperations={() => openOperations({ jobType: 'all' })}
                       onOpenSearch={() => setTab('search')}
+                      navigationTarget={navigationTarget?.surface === 'admin' ? navigationTarget : null}
+                      onOpenSurfaceTarget={onOpenSurfaceTarget}
                     />
                   ) : null}
                 </motion.div>

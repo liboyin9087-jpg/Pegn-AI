@@ -18,7 +18,7 @@ import { useCollections, useCollectionViews } from './hooks/useCollections';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import KeyboardHelpModal from './components/KeyboardHelpModal';
 import { Collection } from './types/collection';
-import { AppContextProvider } from './contexts/AppContext';
+import { AppContextProvider, type RefreshDomain } from './contexts/AppContext';
 import type { CollectionItem } from './contexts/AppContext';
 import {
   getToken, setToken, clearToken, getMe, setOfflineRolloutUserId,
@@ -28,7 +28,13 @@ import {
   acceptInvite,
   listInboxNotifications, markInboxNotificationRead, markAllInboxNotificationsRead, reportOfflineQueueMetrics,
   getOfflineQueueDepth, onOfflineQueueChange, replayQueuedMutations,
-  type InboxNotification, type OfflineQueueMetricsSource,
+  trackProductEvent,
+  type InboxNotification,
+  type OfflineQueueMetricsSource,
+  type SavedViewDetail,
+  type SavedViewPayload,
+  type SavedViewSurface,
+  type SurfaceLinkTarget,
   type WorkspaceMembershipSummary, type WorkspacePermissionSummary, type WorkspaceRecord,
 } from './api/client';
 
@@ -39,6 +45,23 @@ const DEFAULT_WORKSPACE_PERMISSIONS: WorkspacePermissionSummary = {
   canEditDocuments: false,
   canDeleteDocuments: false,
   canRunAutomation: false,
+};
+
+const DEFAULT_REFRESH_VERSIONS: Record<RefreshDomain, number> = {
+  search: 0,
+  agentRuns: 0,
+  jobs: 0,
+  admin: 0,
+  audit: 0,
+  inbox: 0,
+};
+
+const DEFAULT_SURFACE_CONTEXTS: Record<SavedViewSurface, SavedViewPayload | null> = {
+  search: null,
+  operations: null,
+  agent: null,
+  inbox: null,
+  admin: null,
 };
 
 function toWorkspaceMembershipSummary(workspace: WorkspaceRecord | null): WorkspaceMembershipSummary | null {
@@ -77,6 +100,9 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [aiInitPrompt, setAiInitPrompt] = useState<string | undefined>();
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('pegn-theme') === 'dark');
+  const [aiNavigationTarget, setAiNavigationTarget] = useState<SurfaceLinkTarget | null>(null);
+  const [refreshVersions, setRefreshVersions] = useState<Record<RefreshDomain, number>>(DEFAULT_REFRESH_VERSIONS);
+  const [surfaceContexts, setSurfaceContexts] = useState<Record<SavedViewSurface, SavedViewPayload | null>>(DEFAULT_SURFACE_CONTEXTS);
 
   // ── TaskModal & Presentation ──────────────────────────────────────────────
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -165,7 +191,7 @@ export default function App() {
   const refreshInbox = useCallback(async (status: 'unread' | 'all' = 'all') => {
     setInboxLoading(true);
     try {
-      const { notifications, unread_count } = await listInboxNotifications(status);
+      const { notifications, unread_count } = await listInboxNotifications(status, workspace?.id);
       setInboxNotifications(notifications);
       setInboxUnreadCount(unread_count);
     } catch (error) {
@@ -173,7 +199,136 @@ export default function App() {
     } finally {
       setInboxLoading(false);
     }
+  }, [workspace?.id]);
+
+  const requestRefresh = useCallback((domains: RefreshDomain[]) => {
+    setRefreshVersions((current) => {
+      const next = { ...current };
+      for (const domain of domains) {
+        next[domain] += 1;
+      }
+      return next;
+    });
   }, []);
+
+  const setSurfaceContext = useCallback((surface: SavedViewSurface, payload: SavedViewPayload) => {
+    setSurfaceContexts((current) => ({
+      ...current,
+      [surface]: payload,
+    }));
+  }, []);
+
+  const captureCurrentSurfaceContext = useCallback((surface: SavedViewSurface) => {
+    return surfaceContexts[surface] ?? null;
+  }, [surfaceContexts]);
+
+  const openSurfaceTarget = useCallback((target: SurfaceLinkTarget) => {
+    switch (target.surface) {
+      case 'document': {
+        const documentId = target.payload.documentId;
+        const nextDoc = documentId ? documents.find((doc) => doc.id === documentId) : null;
+        if (nextDoc) {
+          setActiveDoc(nextDoc);
+          setActiveCollection(null);
+          if (target.payload.threadId) {
+            setFocusThreadId(target.payload.threadId);
+          }
+          return;
+        }
+        setAiNavigationTarget({
+          surface: 'search',
+          payload: {
+            ...(documentId ? { documentId } : {}),
+            ...(target.context?.query ? { query: target.context.query } : {}),
+          },
+          context: target.context,
+        });
+        setAiSheetOpen(true);
+        return;
+      }
+      case 'search':
+      case 'agent':
+      case 'operations':
+      case 'admin':
+      case 'inbox':
+        setAiNavigationTarget(target);
+        if (target.surface === 'inbox') {
+          setInboxOpen(true);
+          return;
+        }
+        setAiSheetOpen(true);
+        return;
+      default:
+        setAiSheetOpen(true);
+    }
+  }, [documents]);
+
+  const applySavedView = useCallback((view: SavedViewDetail) => {
+    setSurfaceContext(view.surface, view.payload);
+
+    switch (view.surface) {
+      case 'search': {
+        const payload = view.payload as Record<string, unknown>;
+        openSurfaceTarget({
+          surface: 'search',
+          payload: {
+            query: typeof payload.query === 'string' ? payload.query : undefined,
+            documentId: typeof payload.selectedDocumentId === 'string' ? payload.selectedDocumentId : undefined,
+          },
+          context: {
+            query: typeof payload.query === 'string' ? payload.query : undefined,
+          },
+        });
+        return;
+      }
+      case 'operations': {
+        const payload = view.payload as Record<string, unknown>;
+        openSurfaceTarget({
+          surface: 'operations',
+          payload: {
+            jobId: typeof payload.selectedJobId === 'string' ? payload.selectedJobId : undefined,
+            jobType: typeof payload.jobType === 'string' ? payload.jobType as any : 'all',
+            resourceType: typeof payload.resourceType === 'string' ? payload.resourceType : undefined,
+          },
+          context: {
+            filter: typeof payload.status === 'string' ? payload.status : undefined,
+          },
+        });
+        return;
+      }
+      case 'agent': {
+        const payload = view.payload as Record<string, unknown>;
+        openSurfaceTarget({
+          surface: 'agent',
+          payload: {
+            runId: typeof payload.selectedRunId === 'string' ? payload.selectedRunId : undefined,
+          },
+          context: {
+            filter: typeof payload.status === 'string' ? payload.status : undefined,
+          },
+        });
+        return;
+      }
+      case 'admin': {
+        const payload = view.payload as Record<string, unknown>;
+        openSurfaceTarget({
+          surface: 'admin',
+          payload: {
+            section: typeof payload.section === 'string' ? payload.section as any : 'summary',
+          },
+          context: {
+            section: typeof payload.section === 'string' ? payload.section : undefined,
+          },
+        });
+        return;
+      }
+      case 'inbox':
+        setInboxOpen(true);
+        return;
+      default:
+        return;
+    }
+  }, [openSurfaceTarget, setSurfaceContext]);
 
   const { collections, addCollection } = useCollections(workspace?.id);
   const { views, addView } = useCollectionViews(activeCollection?.id);
@@ -279,60 +434,53 @@ export default function App() {
       await markInboxNotificationRead(notificationId);
       setInboxNotifications(prev => prev.map(n => n.id === notificationId ? { ...n, status: 'read', read_at: new Date().toISOString() } : n));
       setInboxUnreadCount(prev => Math.max(0, prev - 1));
+      setSurfaceContext('inbox', {
+        ...(surfaceContexts.inbox ?? {}),
+        selectedNotificationId: notificationId,
+      });
+      requestRefresh(['inbox']);
     } catch (error) {
       console.error('Failed to mark notification as read', error);
     }
-  }, []);
+  }, [requestRefresh, setSurfaceContext, surfaceContexts.inbox]);
 
   const handleMarkAllNotificationsRead = useCallback(async () => {
     try {
-      await markAllInboxNotificationsRead();
+      await markAllInboxNotificationsRead(workspace?.id);
       setInboxNotifications(prev => prev.map(n => ({ ...n, status: 'read', read_at: n.read_at ?? new Date().toISOString() })));
       setInboxUnreadCount(0);
+      requestRefresh(['inbox']);
     } catch (error) {
       console.error('Failed to mark all notifications as read', error);
     }
-  }, []);
+  }, [requestRefresh, workspace?.id]);
 
   const handleOpenNotification = useCallback(async (notification: InboxNotification) => {
     if (notification.status === 'unread') {
       await handleMarkNotificationRead(notification.id);
     }
-
-    switch (notification.type) {
-      case 'mention': {
-        const documentId = notification.payload.document_id;
-        const threadId = notification.payload.thread_id;
-        if (documentId) {
-          const nextDoc = documents.find(d => d.id === documentId);
-          if (nextDoc) {
-            setActiveDoc(nextDoc);
-            setActiveCollection(null);
-          }
-        }
-        if (threadId) {
-          setFocusThreadId(threadId);
-        }
-        break;
-      }
-      case 'quota_alert':
-        console.warn('Quota alert notification opened', notification.payload);
-        break;
-      case 'automation':
-        console.warn('Automation notification opened', notification.payload);
-        break;
-      case 'unknown':
-        console.warn('Unknown notification opened', notification.payload);
-        break;
+    if (workspace?.id && user?.id) {
+      void trackProductEvent('notification_opened', {
+        workspaceId: workspace.id,
+        userId: user.id,
+        surface: 'inbox',
+        targetType: notification.type,
+        targetId: notification.id,
+        metadata: {
+          hasJob: Boolean(notification.relatedJobId),
+          hasRun: Boolean(notification.relatedRunId),
+          hasDocument: Boolean(notification.relatedDocumentId),
+        },
+      }).catch(() => undefined);
     }
-
+    openSurfaceTarget(notification.sourceTarget);
     setInboxOpen(false);
-  }, [documents, handleMarkNotificationRead]);
+  }, [handleMarkNotificationRead, openSurfaceTarget, user?.id, workspace?.id]);
 
   useEffect(() => {
     if (!user) return;
     refreshInbox('all');
-  }, [user?.id, workspace?.id, refreshInbox]);
+  }, [user?.id, workspace?.id, refreshInbox, refreshVersions.inbox]);
 
   useEffect(() => {
     if (!user?.id || !workspace?.id) return;
@@ -542,6 +690,19 @@ export default function App() {
       openTaskModal,
       openEditModal,
       closeTaskModal,
+      openSurfaceTarget,
+      requestRefresh,
+      refreshVersions,
+      surfaceContexts: {
+        search: surfaceContexts.search as any,
+        operations: surfaceContexts.operations as any,
+        agent: surfaceContexts.agent as any,
+        inbox: surfaceContexts.inbox as any,
+        admin: surfaceContexts.admin as any,
+      },
+      setSurfaceContext,
+      captureCurrentSurfaceContext,
+      applySavedView,
     }}>
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--color-surface)' }}>
       {/* Modals */}
@@ -592,11 +753,13 @@ export default function App() {
       <ErrorBoundary>
         <AiSheet
           open={aiSheetOpen}
-          onClose={() => { setAiSheetOpen(false); setAiInitPrompt(undefined); }}
+          onClose={() => { setAiSheetOpen(false); setAiInitPrompt(undefined); setAiNavigationTarget(null); }}
           workspaceId={workspace?.id}
           activeDoc={activeDoc}
           onNavigateDoc={handleNavigateDoc}
           initialPrompt={aiInitPrompt}
+          navigationTarget={aiNavigationTarget}
+          onOpenSurfaceTarget={openSurfaceTarget}
         />
       </ErrorBoundary>
 

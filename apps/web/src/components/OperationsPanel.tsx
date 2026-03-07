@@ -6,13 +6,16 @@ import {
   getWorkspaceJobSummary,
   listWorkspaceJobs,
   retryWorkspaceJob,
+  trackProductEvent,
   type JobRecord,
   type JobStatus,
   type JobType,
+  type SurfaceLinkTarget,
 } from '../api/client';
-import { useWorkspacePermissions } from '../contexts/AppContext';
+import { useOptionalAppContext, useRefreshVersion, useWorkspacePermissions } from '../contexts/AppContext';
 import EmptyState from './EmptyState';
 import ErrorState from './ErrorState';
+import InlineRetryState from './InlineRetryState';
 import JobsTable from './JobsTable';
 import JobStatusBadge from './JobStatusBadge';
 import JobTimeline from './JobTimeline';
@@ -38,12 +41,18 @@ export default function OperationsPanel({
   workspaceId,
   selectedJobId,
   initialJobType = 'all',
+  navigationTarget,
+  onOpenSurfaceTarget,
 }: {
   workspaceId: string;
   selectedJobId?: string | null;
   initialJobType?: 'all' | JobType;
+  navigationTarget?: SurfaceLinkTarget | null;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }) {
   const permissions = useWorkspacePermissions();
+  const appContext = useOptionalAppContext();
+  const refreshVersion = useRefreshVersion('jobs');
   const [statusFilter, setStatusFilter] = useState<'all' | JobStatus>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | JobType>(initialJobType);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -99,7 +108,7 @@ export default function OperationsPanel({
 
   useEffect(() => {
     void loadJobs();
-  }, [loadJobs]);
+  }, [loadJobs, refreshVersion]);
 
   useEffect(() => {
     if (selectedJobId) {
@@ -107,23 +116,44 @@ export default function OperationsPanel({
     }
   }, [loadJobDetail, selectedJobId]);
 
+  useEffect(() => {
+    if (!navigationTarget || navigationTarget.surface !== 'operations') return;
+    if (navigationTarget.payload.jobType) {
+      setTypeFilter(navigationTarget.payload.jobType);
+    }
+    if (navigationTarget.payload.jobId) {
+      void loadJobDetail(navigationTarget.payload.jobId);
+    }
+  }, [loadJobDetail, navigationTarget]);
+
   const activeFailedJobs = useMemo(
     () => jobs.filter((job) => job.status === 'failed' || job.status === 'timeout'),
     [jobs]
   );
 
   const handleRetry = useCallback(async (jobId: string) => {
+    if (appContext?.user?.id) {
+      void trackProductEvent('job_retry_clicked', {
+        workspaceId,
+        userId: appContext.user.id,
+        surface: 'operations',
+        targetType: 'job',
+        targetId: jobId,
+      }).catch(() => undefined);
+    }
     await retryWorkspaceJob(workspaceId, jobId);
+    appContext?.requestRefresh(['jobs', 'admin', 'audit', 'inbox']);
     await loadJobs();
-  }, [loadJobs, workspaceId]);
+  }, [appContext?.user?.id, loadJobs, workspaceId]);
 
   const handleCancel = useCallback(async (jobId: string) => {
     await cancelWorkspaceJob(workspaceId, jobId);
+    appContext?.requestRefresh(['jobs', 'admin', 'audit', 'inbox']);
     await loadJobs();
     if (selectedJob?.id === jobId) {
       await loadJobDetail(jobId);
     }
-  }, [loadJobDetail, loadJobs, selectedJob?.id, workspaceId]);
+  }, [appContext, loadJobDetail, loadJobs, selectedJob?.id, workspaceId]);
 
   return (
     <div className="flex h-full flex-col gap-3 bg-surface p-3">
@@ -190,7 +220,13 @@ export default function OperationsPanel({
         ) : null}
 
         {detailLoading ? <LoadingSkeleton lines={3} /> : null}
-        {detailError ? <ErrorState title="Failed to load job detail" description={detailError} /> : null}
+        {detailError ? (
+          <InlineRetryState
+            title="Failed to load job detail"
+            description={detailError}
+            onRetry={selectedJobId ? () => { void loadJobDetail(selectedJobId); } : undefined}
+          />
+        ) : null}
         {!detailLoading && !detailError && selectedJob ? (
           <div className="space-y-3">
             <div className="rounded-xl border border-border bg-panel p-3">

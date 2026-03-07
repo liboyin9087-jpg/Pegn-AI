@@ -259,6 +259,64 @@ export async function runColumnMigrations(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_created_at ON audit_logs(workspace_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_event_created_at ON audit_logs(workspace_id, event_type, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created_at ON audit_logs(target_type, target_id, created_at DESC)`,
+    // P2-E: product telemetry events
+    `CREATE TABLE IF NOT EXISTS product_telemetry_events (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       event_name TEXT NOT NULL,
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       surface TEXT NOT NULL,
+       target_type TEXT,
+       target_id TEXT,
+       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+     )`,
+    `ALTER TABLE product_telemetry_events DROP CONSTRAINT IF EXISTS product_telemetry_events_event_name_check`,
+    `ALTER TABLE product_telemetry_events ADD CONSTRAINT product_telemetry_events_event_name_check CHECK (
+       event_name IN (
+         'search_performed',
+         'search_no_result',
+         'reindex_triggered',
+         'agent_run_created',
+         'agent_rerun_clicked',
+         'job_retry_clicked',
+         'alert_opened',
+         'notification_opened'
+       )
+     )`,
+    `ALTER TABLE product_telemetry_events DROP CONSTRAINT IF EXISTS product_telemetry_events_surface_check`,
+    `ALTER TABLE product_telemetry_events ADD CONSTRAINT product_telemetry_events_surface_check CHECK (
+       surface IN ('search', 'agent', 'operations', 'admin', 'document', 'inbox')
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_product_telemetry_workspace_created_at ON product_telemetry_events(workspace_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_product_telemetry_event_created_at ON product_telemetry_events(event_name, created_at DESC)`,
+    // P3-A: saved views / workspace context
+    `CREATE TABLE IF NOT EXISTS saved_views (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       scope TEXT NOT NULL,
+       surface TEXT NOT NULL,
+       name TEXT NOT NULL,
+       description TEXT,
+       context_version INTEGER NOT NULL DEFAULT 1,
+       payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+       is_pinned BOOLEAN NOT NULL DEFAULT false,
+       is_default BOOLEAN NOT NULL DEFAULT false,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+     )`,
+    `ALTER TABLE saved_views ALTER COLUMN context_version SET DEFAULT 1`,
+    `ALTER TABLE saved_views ALTER COLUMN payload SET DEFAULT '{}'::jsonb`,
+    `ALTER TABLE saved_views ALTER COLUMN is_pinned SET DEFAULT false`,
+    `ALTER TABLE saved_views ALTER COLUMN is_default SET DEFAULT false`,
+    `ALTER TABLE saved_views DROP CONSTRAINT IF EXISTS saved_views_scope_check`,
+    `ALTER TABLE saved_views ADD CONSTRAINT saved_views_scope_check CHECK (scope IN ('personal', 'workspace'))`,
+    `ALTER TABLE saved_views DROP CONSTRAINT IF EXISTS saved_views_surface_check`,
+    `ALTER TABLE saved_views ADD CONSTRAINT saved_views_surface_check CHECK (surface IN ('search', 'operations', 'agent', 'inbox', 'admin'))`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_surface_created_at ON saved_views(workspace_id, surface, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_views_owner_workspace_surface_created_at ON saved_views(owner_user_id, workspace_id, surface, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_scope_surface_pinned_created_at ON saved_views(workspace_id, scope, surface, is_pinned, created_at DESC)`,
     // P0: inbox notification type contract for existing databases
     `ALTER TABLE inbox_notifications DROP CONSTRAINT IF EXISTS inbox_notifications_type_check`,
     `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'quota_alert', 'automation'))`,
@@ -282,9 +340,9 @@ export async function checkSchema(): Promise<boolean> {
   try {
     const result = await pool.query(`
       SELECT COUNT(*) as count FROM information_schema.tables
-      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs')
+      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs', 'product_telemetry_events', 'saved_views')
     `);
-    return parseInt(result.rows[0].count) >= 13;
+    return parseInt(result.rows[0].count) >= 15;
   } catch (error) {
     console.error('[migrations] Failed to check schema:', error);
     return false;

@@ -4,6 +4,7 @@ export default function AgentFailureState({
   canRerun,
   onRerun,
   onOpenJob,
+  onOpenJobTrace,
   readOnlyReason,
 }: {
   errorSummary: string;
@@ -11,6 +12,7 @@ export default function AgentFailureState({
   canRerun: boolean;
   onRerun?: () => void;
   onOpenJob?: (jobId: string) => void;
+  onOpenJobTrace?: () => void;
   readOnlyReason?: string;
 }) {
   return (
@@ -20,7 +22,13 @@ export default function AgentFailureState({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {jobId && onOpenJob ? (
           <button
-            onClick={() => onOpenJob(jobId)}
+            onClick={() => {
+              if (onOpenJobTrace) {
+                onOpenJobTrace();
+                return;
+              }
+              onOpenJob(jobId);
+            }}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-tertiary"
           >
             View job trace

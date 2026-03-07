@@ -18,6 +18,8 @@ describe('InboxPanel', () => {
             id: 'n1',
             workspace_id: 'ws1',
             user_id: 'u1',
+            summary: 'Hello @you',
+            sourceTarget: { surface: 'document', payload: { documentId: 'doc1', threadId: 't1', commentId: 'c1' } },
             type: 'mention',
             payload: {
               workspace_id: 'ws1',
@@ -34,9 +36,11 @@ describe('InboxPanel', () => {
             id: 'n2',
             workspace_id: 'ws1',
             user_id: 'u1',
+            summary: 'Quota reached 80%',
+            sourceTarget: { surface: 'admin', payload: { section: 'usage' } },
             type: 'quota_alert',
             payload: {
-              title: 'Quota 警告',
+              title: 'Quota alert',
               message: 'Quota reached 80%',
               resource_type: 'agent_runs',
               used: 8,
@@ -51,6 +55,8 @@ describe('InboxPanel', () => {
             id: 'n3',
             workspace_id: 'ws1',
             user_id: 'u1',
+            summary: 'Workflow completed',
+            sourceTarget: { surface: 'operations', payload: { jobId: 'job-3', jobType: 'automation_trigger' } },
             type: 'automation',
             payload: {
               title: 'Automation',
@@ -63,9 +69,11 @@ describe('InboxPanel', () => {
             id: 'n4',
             workspace_id: 'ws1',
             user_id: 'u1',
+            summary: 'Unknown notification',
+            sourceTarget: { surface: 'search', payload: {} },
             type: 'unknown',
             payload: {
-              title: '系統通知',
+              title: 'System notification',
               message: 'Unknown notification',
               raw_type: 'legacy_type',
             },
@@ -82,12 +90,12 @@ describe('InboxPanel', () => {
     );
 
     expect(screen.getByText('Inbox')).toBeInTheDocument();
-    expect(screen.getByText('提及你於留言串')).toBeInTheDocument();
-    expect(screen.getByText('Quota 警告')).toBeInTheDocument();
+    expect(screen.getByText('Mention')).toBeInTheDocument();
+    expect(screen.getByText('Quota alert')).toBeInTheDocument();
     expect(screen.getByText('Automation')).toBeInTheDocument();
-    expect(screen.getByText('系統通知')).toBeInTheDocument();
+    expect(screen.getByText('System notification')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('全部標記已讀'));
+    fireEvent.click(screen.getByText('Mark all read'));
     expect(onMarkAllRead).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByText('Hello @you'));

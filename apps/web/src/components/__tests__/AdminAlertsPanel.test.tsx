@@ -4,9 +4,7 @@ import AdminAlertsPanel from '../AdminAlertsPanel';
 
 describe('AdminAlertsPanel', () => {
   it('renders alerts and deep-links to related surfaces', () => {
-    const onOpenOperations = vi.fn();
-    const onOpenSearch = vi.fn();
-    const onFocusUsage = vi.fn();
+    const onOpenTarget = vi.fn();
     render(
       <AdminAlertsPanel
         items={[
@@ -16,6 +14,7 @@ describe('AdminAlertsPanel', () => {
             severity: 'critical',
             title: 'Recent failed jobs spike',
             description: 'There are many failed jobs.',
+            target: { surface: 'operations', payload: { jobId: 'job-1', jobType: 'all' } },
             relatedTargetType: 'job',
             relatedTargetId: 'job-1',
             createdAt: '2026-03-07T00:00:00.000Z',
@@ -26,22 +25,20 @@ describe('AdminAlertsPanel', () => {
             severity: 'warning',
             title: 'Quota threshold reached',
             description: 'Usage is high.',
+            target: { surface: 'admin', payload: { section: 'usage' } },
             relatedTargetType: 'quota',
             relatedTargetId: 'ws-1',
             createdAt: '2026-03-07T00:00:00.000Z',
           },
         ]}
-        onOpenOperations={onOpenOperations}
-        onOpenSearch={onOpenSearch}
-        onFocusUsage={onFocusUsage}
+        onOpenTarget={onOpenTarget}
       />
     );
 
     fireEvent.click(screen.getByText('Recent failed jobs spike'));
-    expect(onOpenOperations).toHaveBeenCalledTimes(1);
+    expect(onOpenTarget).toHaveBeenCalledWith(expect.objectContaining({ surface: 'operations' }));
 
     fireEvent.click(screen.getByText('Quota threshold reached'));
-    expect(onFocusUsage).toHaveBeenCalledTimes(1);
-    expect(onOpenSearch).not.toHaveBeenCalled();
+    expect(onOpenTarget).toHaveBeenCalledWith(expect.objectContaining({ surface: 'admin' }));
   });
 });

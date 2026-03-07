@@ -6,15 +6,17 @@ import {
   rerunAgentRun,
   listAgentRuns,
   streamAgentRun,
+  trackProductEvent,
   type AgentRun,
   type AgentRunDetail,
   type AgentRunListItem,
+  type SurfaceLinkTarget,
   type AgentRunStep,
   type WorkspaceMembershipSummary,
 } from '../api/client';
 import AgentRunDetailPanel from './AgentRunDetailPanel';
 import AgentRunHistoryList from './AgentRunHistoryList';
-import { useOptionalAppContext } from '../contexts/AppContext';
+import { useOptionalAppContext, useRefreshVersion } from '../contexts/AppContext';
 import ForbiddenState from './ForbiddenState';
 
 const STATUS_COPY: Record<AgentRun['status'], string> = {
@@ -108,13 +110,18 @@ export default function AgentPanel({
   activeDoc,
   workspaceMembershipSummary,
   onOpenJob,
+  navigationTarget,
+  onOpenSurfaceTarget,
 }: {
   workspaceId: string;
   activeDoc: any;
   workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
   onOpenJob?: (jobId: string) => void;
+  navigationTarget?: SurfaceLinkTarget | null;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }) {
   const appContext = useOptionalAppContext();
+  const refreshVersion = useRefreshVersion('agentRuns');
   const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
   const permissions = membership?.permissionSummary ?? {
     canViewWorkspace: true,
@@ -244,7 +251,7 @@ export default function AgentPanel({
 
   useEffect(() => {
     void refreshRunList();
-  }, [refreshRunList]);
+  }, [refreshRunList, refreshVersion]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -255,6 +262,14 @@ export default function AgentPanel({
       stopStreaming();
     };
   }, [restoreRun, stopStreaming, storageKey, workspaceId]);
+
+  useEffect(() => {
+    if (!navigationTarget || navigationTarget.surface !== 'agent') return;
+    const targetRunId = navigationTarget.payload.runId;
+    if (targetRunId) {
+      void restoreRun(targetRunId, true);
+    }
+  }, [navigationTarget, restoreRun]);
 
   const handleStart = useCallback(async () => {
     if (!permissions.canRunAutomation || !workspaceId || !input.trim() || createPending) return;
@@ -272,9 +287,21 @@ export default function AgentPanel({
         template: config.template,
       });
 
+      if (appContext?.user?.id) {
+        void trackProductEvent('agent_run_created', {
+          workspaceId,
+          userId: appContext.user.id,
+          surface: 'agent',
+          targetType: 'run',
+          targetId: nextRun.runId ?? nextRun.id,
+          metadata: { mode, template: config.template },
+        }).catch(() => undefined);
+      }
+
       await refreshRunList();
       const nextRunId = nextRun.runId ?? nextRun.id;
       await restoreRun(nextRunId, true);
+      appContext?.requestRefresh(['agentRuns', 'jobs', 'admin', 'audit', 'inbox']);
     } catch {
       setRuntimeError('Failed to create agent run');
     } finally {
@@ -286,13 +313,24 @@ export default function AgentPanel({
     if (!permissions.canRunAutomation || !run) return;
     setRuntimeError(null);
     try {
+      if (appContext?.user?.id) {
+        void trackProductEvent('agent_rerun_clicked', {
+          workspaceId,
+          userId: appContext.user.id,
+          surface: 'agent',
+          targetType: 'run',
+          targetId: run.runId,
+          metadata: { jobId: run.jobId ?? null },
+        }).catch(() => undefined);
+      }
       const rerun = await rerunAgentRun(run.runId, workspaceId);
       await refreshRunList();
       await restoreRun(rerun.runId, true);
+      appContext?.requestRefresh(['agentRuns', 'jobs', 'admin', 'audit', 'inbox']);
     } catch {
       setRuntimeError('Failed to rerun agent workflow');
     }
-  }, [permissions.canRunAutomation, refreshRunList, restoreRun, run, workspaceId]);
+  }, [appContext, permissions.canRunAutomation, refreshRunList, restoreRun, run, workspaceId]);
 
   const handleSaveToDoc = useCallback(async () => {
     if (!permissions.canEditDocuments) {
@@ -437,7 +475,13 @@ export default function AgentPanel({
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {run.jobId && onOpenJob ? (
                 <button
-                  onClick={() => onOpenJob(run.jobId!)}
+                  onClick={() => {
+                    if (run.jobTarget && onOpenSurfaceTarget) {
+                      onOpenSurfaceTarget(run.jobTarget);
+                      return;
+                    }
+                    onOpenJob(run.jobId!);
+                  }}
                   className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-tertiary"
                 >
                   View job trace
@@ -459,6 +503,7 @@ export default function AgentPanel({
             canRerun={canRerun}
             onRerun={() => void handleRerun()}
             onOpenJob={onOpenJob}
+            onOpenJobTrace={run.jobTarget && onOpenSurfaceTarget ? () => onOpenSurfaceTarget(run.jobTarget!) : undefined}
           />
 
           {runSteps.length > 0 ? (

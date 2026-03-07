@@ -37,6 +37,8 @@ function createSearchResponse(overrides: Partial<any> = {}) {
         isStale: true,
         staleReason: 'document_updated_after_index',
         score: 0.91,
+        documentTarget: { surface: 'document', payload: { documentId: 'doc-1' } },
+        traceTarget: { surface: 'operations', payload: { jobId: 'job-1', jobType: 'document_reindex' } },
       },
     ],
     total: 1,
@@ -61,7 +63,7 @@ function createSearchResponse(overrides: Partial<any> = {}) {
 
 function renderWithPermissions(canEditDocuments = false) {
   const value: AppContextValue = {
-    user: null,
+    user: { id: 'user-1' },
     workspace: null,
     workspacePermissions: {
       canViewWorkspace: true,
@@ -90,6 +92,16 @@ function renderWithPermissions(canEditDocuments = false) {
     openTaskModal: vi.fn(),
     openEditModal: vi.fn(),
     closeTaskModal: vi.fn(),
+    openSurfaceTarget: vi.fn(),
+    requestRefresh: vi.fn(),
+    refreshVersions: {
+      search: 0,
+      agentRuns: 0,
+      jobs: 0,
+      admin: 0,
+      audit: 0,
+      inbox: 0,
+    },
   };
 
   return render(

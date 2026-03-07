@@ -14,6 +14,7 @@ import {
   type JobTriggeredVia,
   type JobType,
 } from './jobService.js';
+import { createDocumentTarget, createOperationsTarget, type SurfaceLinkTarget } from './surfaceTargets.js';
 
 const DEFAULT_SNIPPET = 'This result does not have a preview available.';
 const SNIPPET_WINDOW = 96;
@@ -44,6 +45,8 @@ export interface SearchResultItem {
   isStale: boolean;
   staleReason: 'document_updated_after_index' | 'document_marked_stale' | 'index_failed' | 'not_indexed' | null;
   score: number;
+  documentTarget: SurfaceLinkTarget;
+  traceTarget?: SurfaceLinkTarget | null;
 }
 
 export interface SearchResponse {
@@ -557,6 +560,17 @@ export class SearchService {
         isStale: freshness.isStale,
         staleReason: freshness.staleReason,
         score: typeof row.score === 'number' ? row.score : parseFloat(row.score),
+        documentTarget: createDocumentTarget({
+          documentId: row.document_id,
+        }),
+        traceTarget: freshness.isStale
+          ? createOperationsTarget({
+              jobType: freshness.staleReason === 'index_failed' ? 'document_index' : 'document_reindex',
+              resourceType: 'document',
+              resourceId: row.document_id,
+              filter: freshness.staleReason ?? 'stale',
+            })
+          : null,
       } satisfies SearchResultItem;
     });
 

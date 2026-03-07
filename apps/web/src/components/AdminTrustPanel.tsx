@@ -4,12 +4,14 @@ import {
   getWorkspaceAdminSummary,
   getWorkspaceUsage,
   listWorkspaceAuditLogs,
+  trackProductEvent,
   type AdminAlert,
   type AdminSummary,
   type AuditLogItem,
+  type SurfaceLinkTarget,
   type UsageSummary,
 } from '../api/client';
-import { useWorkspacePermissions } from '../contexts/AppContext';
+import { useOptionalAppContext, useRefreshVersion, useWorkspacePermissions } from '../contexts/AppContext';
 import ForbiddenState from './ForbiddenState';
 import ErrorState from './ErrorState';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -22,12 +24,19 @@ export default function AdminTrustPanel({
   workspaceId,
   onOpenOperations,
   onOpenSearch,
+  navigationTarget,
+  onOpenSurfaceTarget,
 }: {
   workspaceId: string;
   onOpenOperations: () => void;
   onOpenSearch: () => void;
+  navigationTarget?: SurfaceLinkTarget | null;
+  onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }) {
   const permissions = useWorkspacePermissions();
+  const appContext = useOptionalAppContext();
+  const adminRefreshVersion = useRefreshVersion('admin');
+  const auditRefreshVersion = useRefreshVersion('audit');
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [alerts, setAlerts] = useState<AdminAlert[]>([]);
@@ -63,7 +72,7 @@ export default function AdminTrustPanel({
   useEffect(() => {
     if (!permissions.canManageSettings) return;
     void loadAdminSurface();
-  }, [loadAdminSurface, permissions.canManageSettings]);
+  }, [auditRefreshVersion, adminRefreshVersion, loadAdminSurface, permissions.canManageSettings]);
 
   const handleLoadMore = useCallback(async () => {
     if (!nextCursor) return;
@@ -77,6 +86,14 @@ export default function AdminTrustPanel({
     usageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     window.setTimeout(() => setUsageHighlighted(false), 1600);
   }, []);
+
+  useEffect(() => {
+    if (!navigationTarget || navigationTarget.surface !== 'admin') return;
+    const section = navigationTarget.payload.section ?? navigationTarget.context?.section;
+    if (section === 'usage') {
+      handleFocusUsage();
+    }
+  }, [handleFocusUsage, navigationTarget]);
 
   const content = useMemo(() => {
     if (!permissions.canManageSettings) {
@@ -99,14 +116,43 @@ export default function AdminTrustPanel({
         </div>
         <AdminAlertsPanel
           items={alerts}
-          onOpenOperations={onOpenOperations}
-          onOpenSearch={onOpenSearch}
-          onFocusUsage={handleFocusUsage}
+          onOpenTarget={(target) => {
+            if (workspaceId && appContext?.user?.id && onOpenSurfaceTarget && target.surface !== 'admin') {
+              const targetId =
+                'jobId' in target.payload ? target.payload.jobId :
+                'runId' in target.payload ? target.payload.runId :
+                'documentId' in target.payload ? target.payload.documentId :
+                'section' in target.payload ? target.payload.section :
+                null;
+              void trackProductEvent('alert_opened', {
+                workspaceId,
+                userId: appContext.user.id,
+                surface: 'admin',
+                targetType: target.surface,
+                targetId: targetId ?? null,
+              }).catch(() => undefined);
+            }
+            if (target.surface === 'operations') {
+              onOpenOperations();
+              onOpenSurfaceTarget?.(target);
+              return;
+            }
+            if (target.surface === 'search') {
+              onOpenSearch();
+              onOpenSurfaceTarget?.(target);
+              return;
+            }
+            if (target.surface === 'admin' && target.payload.section === 'usage') {
+              handleFocusUsage();
+              return;
+            }
+            onOpenSurfaceTarget?.(target);
+          }}
         />
         <AuditLogList items={auditItems} hasMore={Boolean(nextCursor)} onLoadMore={() => { void handleLoadMore(); }} />
       </div>
     );
-  }, [alerts, auditItems, error, handleFocusUsage, handleLoadMore, loading, nextCursor, onOpenOperations, onOpenSearch, permissions.canManageSettings, summary, usage, usageHighlighted]);
+  }, [alerts, appContext?.user?.id, auditItems, error, handleFocusUsage, handleLoadMore, loading, nextCursor, onOpenOperations, onOpenSearch, onOpenSurfaceTarget, permissions.canManageSettings, summary, usage, usageHighlighted, workspaceId]);
 
   return <div className="space-y-3 bg-surface p-3">{content}</div>;
 }

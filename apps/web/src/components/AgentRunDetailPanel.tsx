@@ -8,11 +8,13 @@ export default function AgentRunDetailPanel({
   canRerun,
   onRerun,
   onOpenJob,
+  onOpenJobTrace,
 }: {
   run: AgentRunDetail;
   canRerun: boolean;
   onRerun?: () => void;
   onOpenJob?: (jobId: string) => void;
+  onOpenJobTrace?: () => void;
 }) {
   return (
     <div className="space-y-3">
@@ -50,6 +52,7 @@ export default function AgentRunDetailPanel({
           canRerun={canRerun}
           onRerun={onRerun}
           onOpenJob={onOpenJob}
+          onOpenJobTrace={onOpenJobTrace}
           readOnlyReason={canRerun ? undefined : 'You can inspect this run, but you do not have permission to rerun it.'}
         />
       ) : null}

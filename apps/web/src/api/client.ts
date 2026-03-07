@@ -163,6 +163,8 @@ export interface SearchResultItem {
   isStale: boolean;
   staleReason: 'document_updated_after_index' | 'document_marked_stale' | 'index_failed' | 'not_indexed' | null;
   score: number;
+  documentTarget: SurfaceLinkTarget;
+  traceTarget?: SurfaceLinkTarget | null;
 }
 
 export interface SearchResponse {
@@ -200,6 +202,137 @@ export interface WorkspaceMembershipSummary {
   effectiveRole: WorkspaceRole;
   permissions: string[];
   permissionSummary: WorkspacePermissionSummary;
+}
+
+export type SurfaceLinkTarget =
+  | {
+      surface: 'document';
+      payload: {
+        documentId?: string;
+        threadId?: string;
+        commentId?: string;
+      };
+      context?: SurfaceLinkContext;
+    }
+  | {
+      surface: 'search';
+      payload: {
+        query?: string;
+        documentId?: string;
+      };
+      context?: SurfaceLinkContext;
+    }
+  | {
+      surface: 'agent';
+      payload: {
+        runId?: string;
+        jobId?: string;
+      };
+      context?: SurfaceLinkContext;
+    }
+  | {
+      surface: 'operations';
+      payload: {
+        jobId?: string;
+        jobType?: JobType | 'all';
+        resourceType?: string;
+        resourceId?: string;
+      };
+      context?: SurfaceLinkContext;
+    }
+  | {
+      surface: 'admin';
+      payload: {
+        section?: 'summary' | 'usage' | 'alerts' | 'audit';
+      };
+      context?: SurfaceLinkContext;
+    }
+  | {
+      surface: 'inbox';
+      payload: Record<string, never>;
+      context?: SurfaceLinkContext;
+    };
+
+export interface SurfaceLinkContext {
+  tab?: string;
+  section?: string;
+  query?: string;
+  anchor?: string;
+  filter?: string;
+}
+
+export type SavedViewScope = 'personal' | 'workspace';
+export type SavedViewSurface = 'search' | 'operations' | 'agent' | 'inbox' | 'admin';
+
+export interface SearchViewPayload {
+  query?: string;
+  filters?: Record<string, unknown>;
+  type?: string | null;
+  source?: string | null;
+  updatedRange?: '7d' | '30d' | 'all';
+  staleOnly?: boolean;
+  sort?: string | null;
+  selectedDocumentId?: string | null;
+  selectedTraceJobId?: string | null;
+}
+
+export interface OperationsViewPayload {
+  status?: string | null;
+  jobType?: string | null;
+  resourceType?: string | null;
+  selectedJobId?: string | null;
+  detailOpen?: boolean;
+  showFailedOnly?: boolean;
+}
+
+export interface AgentViewPayload {
+  threadId?: string | null;
+  status?: string | null;
+  agentType?: string | null;
+  selectedRunId?: string | null;
+  detailOpen?: boolean;
+  showFailuresOnly?: boolean;
+}
+
+export interface InboxViewPayload {
+  filter?: string | null;
+  unreadOnly?: boolean;
+  type?: string | null;
+  selectedNotificationId?: string | null;
+}
+
+export interface AdminViewPayload {
+  section?: 'summary' | 'usage' | 'alerts' | 'audit';
+  auditFilter?: string | null;
+  eventType?: string | null;
+  targetType?: string | null;
+  selectedAlertId?: string | null;
+}
+
+export type SavedViewPayload =
+  | SearchViewPayload
+  | OperationsViewPayload
+  | AgentViewPayload
+  | InboxViewPayload
+  | AdminViewPayload;
+
+export interface SavedViewSummary {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  scope: SavedViewScope;
+  surface: SavedViewSurface;
+  name: string;
+  description: string | null;
+  isPinned: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedViewDetail extends SavedViewSummary {
+  contextVersion: number;
+  payload: SavedViewPayload;
 }
 
 export interface AuditLogItem {
@@ -250,6 +383,7 @@ export interface AdminAlert {
   severity: 'info' | 'warning' | 'critical';
   title: string;
   description: string;
+  target: SurfaceLinkTarget;
   relatedTargetType: string | null;
   relatedTargetId: string | null;
   createdAt: string;
@@ -428,6 +562,7 @@ export interface AgentRunDetail {
   errorCode?: string | null;
   errorSummary?: string | null;
   jobId?: string | null;
+  jobTarget?: SurfaceLinkTarget | null;
   promptVersion?: string | null;
   promptLabel?: string | null;
   templateId?: string | null;
@@ -679,6 +814,63 @@ export const getWorkspaceUsage = (workspaceId: string) =>
   api<UsageSummary>(`/workspaces/${workspaceId}/usage`);
 export const getWorkspaceAdminAlerts = (workspaceId: string) =>
   api<{ items: AdminAlert[] }>(`/workspaces/${workspaceId}/admin/alerts`);
+
+export const listSavedViews = (
+  workspaceId: string,
+  query?: {
+    surface?: SavedViewSurface;
+    scope?: SavedViewScope;
+    includePinned?: boolean;
+  }
+) => {
+  const params = new URLSearchParams();
+  if (query?.surface) params.set('surface', query.surface);
+  if (query?.scope) params.set('scope', query.scope);
+  if (query?.includePinned) params.set('includePinned', 'true');
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return api<{ items: SavedViewSummary[] }>(`/workspaces/${workspaceId}/saved-views${suffix}`);
+};
+
+export const getSavedView = (workspaceId: string, viewId: string) =>
+  api<SavedViewDetail>(`/workspaces/${workspaceId}/saved-views/${viewId}`);
+
+export const createSavedView = (
+  workspaceId: string,
+  payload: {
+    scope: SavedViewScope;
+    surface: SavedViewSurface;
+    name: string;
+    description?: string | null;
+    payload: SavedViewPayload;
+    isPinned?: boolean;
+    isDefault?: boolean;
+  }
+) =>
+  api<SavedViewDetail>(`/workspaces/${workspaceId}/saved-views`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const updateSavedView = (
+  workspaceId: string,
+  viewId: string,
+  payload: {
+    name?: string;
+    description?: string | null;
+    payload?: SavedViewPayload;
+    isPinned?: boolean;
+    isDefault?: boolean;
+  }
+) =>
+  api<SavedViewDetail>(`/workspaces/${workspaceId}/saved-views/${viewId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+export const deleteSavedView = (workspaceId: string, viewId: string) =>
+  api<undefined>(`/workspaces/${workspaceId}/saved-views/${viewId}`, {
+    method: 'DELETE',
+  });
 
 // ── Documents ────────────────────────────────────────────────
 export const listDocuments = (wsId: string) =>
@@ -980,6 +1172,11 @@ type InboxNotificationBase = {
   status: 'unread' | 'read';
   read_at?: string | null;
   created_at: string;
+  summary: string;
+  sourceTarget: SurfaceLinkTarget;
+  relatedJobId?: string | null;
+  relatedRunId?: string | null;
+  relatedDocumentId?: string | null;
 };
 
 export type InboxNotification =
@@ -1046,6 +1243,11 @@ export function normalizeInboxNotification(notification: RawInboxNotification): 
     status: notification.status,
     read_at: notification.read_at ?? null,
     created_at: notification.created_at,
+    summary: notification.summary,
+    sourceTarget: notification.sourceTarget,
+    relatedJobId: notification.relatedJobId ?? null,
+    relatedRunId: notification.relatedRunId ?? null,
+    relatedDocumentId: notification.relatedDocumentId ?? null,
   } satisfies InboxNotificationBase;
 
   const payload = notification.payload ?? {};
@@ -1186,8 +1388,13 @@ export const reopenCommentThreadQueued = (threadId: string) =>
     body: {},
   });
 
-export const listInboxNotifications = async (status: 'unread' | 'all' = 'unread') => {
-  const response = await api<{ notifications: RawInboxNotification[]; unread_count: number }>(`/inbox/notifications?status=${status}`);
+export const listInboxNotifications = async (
+  status: 'unread' | 'all' = 'unread',
+  workspaceId?: string | null
+) => {
+  const params = new URLSearchParams({ status });
+  if (workspaceId) params.set('workspace_id', workspaceId);
+  const response = await api<{ notifications: RawInboxNotification[]; unread_count: number }>(`/inbox/notifications?${params.toString()}`);
   return {
     notifications: response.notifications.map(normalizeInboxNotification),
     unread_count: response.unread_count,
@@ -1202,10 +1409,44 @@ export const markInboxNotificationRead = async (notificationId: string) => {
   return { notification: normalizeInboxNotification(response.notification) };
 };
 
-export const markAllInboxNotificationsRead = () =>
+export const markAllInboxNotificationsRead = (workspaceId?: string | null) =>
   api<{ updated: number }>(`/inbox/notifications/read_all`, {
     method: 'PATCH',
-    body: JSON.stringify({}),
+    body: JSON.stringify(workspaceId ? { workspace_id: workspaceId } : {}),
+  });
+
+export type ProductTelemetryEventName =
+  | 'search_performed'
+  | 'search_no_result'
+  | 'reindex_triggered'
+  | 'agent_run_created'
+  | 'agent_rerun_clicked'
+  | 'job_retry_clicked'
+  | 'alert_opened'
+  | 'notification_opened';
+
+export const trackProductEvent = (
+  eventName: ProductTelemetryEventName,
+  params: {
+    workspaceId: string;
+    userId: string;
+    surface: 'search' | 'agent' | 'operations' | 'admin' | 'document' | 'inbox';
+    targetType?: string | null;
+    targetId?: string | null;
+    metadata?: Record<string, unknown>;
+  }
+) =>
+  api<{ accepted: true }>('/telemetry/events', {
+    method: 'POST',
+    body: JSON.stringify({
+      event_name: eventName,
+      workspace_id: params.workspaceId,
+      user_id: params.userId,
+      surface: params.surface,
+      target_type: params.targetType ?? null,
+      target_id: params.targetId ?? null,
+      metadata: params.metadata ?? {},
+    }),
   });
 
 // ── Collections ──────────────────────────────────────────────
