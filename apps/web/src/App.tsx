@@ -754,7 +754,7 @@ export default function App() {
                 {activeCollection ? (
                   <CollectionView
                     collection={activeCollection}
-                    workspaceId={workspace?.id}
+                    workspaceId={workspace?.id ?? ''}
                     views={views}
                     collections={collections}
                     onUpdateView={() => { }}

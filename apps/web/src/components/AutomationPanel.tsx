@@ -17,6 +17,11 @@ import {
   AlertCircle, Clock, Loader2,
 } from 'lucide-react';
 import { api } from '../api/client';
+import type { WorkspaceMembershipSummary } from '../api/client';
+import { useOptionalAppContext } from '../contexts/AppContext';
+import EmptyState from './EmptyState';
+import ForbiddenState from './ForbiddenState';
+import LoadingSkeleton from './LoadingSkeleton';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -418,11 +423,12 @@ function CreateForm({ workspaceId, onCreated, onCancel }: CreateFormProps) {
 
 // ── Automation Card ────────────────────────────────────────────────────────
 
-function AutomationCard({ automation, onToggle, onDelete, onTrigger }: {
+function AutomationCard({ automation, onToggle, onDelete, onTrigger, canRunAutomation }: {
   automation: Automation;
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
   onTrigger: (id: string) => void;
+  canRunAutomation: boolean;
 }) {
   const [showHistory, setShowHistory] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -481,6 +487,7 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger }: {
           {/* Toggle */}
           <button
             onClick={() => onToggle(automation.id, !automation.enabled)}
+            disabled={!canRunAutomation}
             title={automation.enabled ? '停用' : '啟用'}
             className="flex-shrink-0 mt-0.5"
           >
@@ -519,7 +526,7 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger }: {
             {/* Manual trigger */}
             <button
               onClick={handleTrigger}
-              disabled={triggering}
+              disabled={triggering || !canRunAutomation}
               className="p-1.5 rounded-lg transition-colors hover:bg-accent-light"
               title="手動執行"
             >
@@ -532,6 +539,7 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger }: {
             {/* Delete */}
             <button
               onClick={() => onDelete(automation.id)}
+              disabled={!canRunAutomation}
               className="p-1.5 rounded-lg transition-colors hover:bg-error-light"
               title="刪除"
             >
@@ -548,9 +556,20 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger }: {
 
 interface Props {
   workspaceId: string;
+  workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
 }
 
-export default function AutomationPanel({ workspaceId }: Props) {
+export default function AutomationPanel({ workspaceId, workspaceMembershipSummary }: Props) {
+  const appContext = useOptionalAppContext();
+  const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
+  const permissions = membership?.permissionSummary ?? {
+    canViewWorkspace: true,
+    canManageMembers: false,
+    canManageSettings: false,
+    canEditDocuments: false,
+    canDeleteDocuments: false,
+    canRunAutomation: false,
+  };
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -572,6 +591,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
   useEffect(() => { load(); }, [load]);
 
   const handleToggle = async (id: string, enabled: boolean) => {
+    if (!permissions.canRunAutomation) return;
     setAutomations(prev => prev.map(a => a.id === id ? { ...a, enabled } : a));
     try {
       await toggleAutomation(id, enabled);
@@ -582,6 +602,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
   };
 
   const handleDelete = async (id: string) => {
+    if (!permissions.canRunAutomation) return;
     if (!confirm('確定要刪除這個自動化嗎？此操作無法復原。')) return;
     setAutomations(prev => prev.filter(a => a.id !== id));
     try {
@@ -592,6 +613,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
   };
 
   const handleTrigger = async (id: string) => {
+    if (!permissions.canRunAutomation) return;
     try {
       await triggerAutomation(id);
       setTriggerFeedback(id);
@@ -630,7 +652,8 @@ export default function AutomationPanel({ workspaceId }: Props) {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+          disabled={!permissions.canRunAutomation}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
           style={{ background: 'var(--color-accent)', color: '#fff' }}
         >
           <Plus size={12} /> 新增
@@ -639,6 +662,14 @@ export default function AutomationPanel({ workspaceId }: Props) {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-4">
+        {!permissions.canRunAutomation ? (
+          <div className="mb-4">
+            <ForbiddenState
+              title="Read-only automation access"
+              description="You can review automation history, but only editors and admins can create, trigger, or modify automations."
+            />
+          </div>
+        ) : null}
         <AnimatePresence>
           {showCreate && (
             <CreateForm
@@ -665,11 +696,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
           )}
         </AnimatePresence>
 
-        {loading && (
-          <div className="flex justify-center py-10">
-            <Loader2 size={18} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
-          </div>
-        )}
+        {loading && <LoadingSkeleton lines={4} />}
 
         {!loading && automations.length === 0 && !showCreate && (
           <div className="flex flex-col items-center justify-center py-10 text-center">
@@ -704,6 +731,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onTrigger={handleTrigger}
+                canRunAutomation={permissions.canRunAutomation}
               />
             ))}
           </div>
@@ -722,6 +750,7 @@ export default function AutomationPanel({ workspaceId }: Props) {
                   onToggle={handleToggle}
                   onDelete={handleDelete}
                   onTrigger={handleTrigger}
+                  canRunAutomation={permissions.canRunAutomation}
                 />
               ))}
             </div>

@@ -348,6 +348,8 @@ function DocTreeNode({
                 onClose={onClose}
                 draggingId={draggingId}
                 dropInfo={dropInfo}
+                canEditDocuments={canEditDocuments}
+                canDeleteDocuments={canDeleteDocuments}
               />
             ))}
           </motion.div>
@@ -380,8 +382,18 @@ export default function Sidebar({
   onSelectDoc, onSelectCollection, onNewDoc, onNewCollection, onUpload, onDeleteDoc, onRenameDoc,
   onMoveDoc,
   inboxUnreadCount = 0, onOpenInbox, onLogout,
-  onClose, onOpenCommand,
+  onClose, onOpenCommand, workspaceMembershipSummary,
 }: Props) {
+  const appContext = useOptionalAppContext();
+  const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
+  const permissions = membership?.permissionSummary ?? {
+    canViewWorkspace: true,
+    canManageMembers: false,
+    canManageSettings: false,
+    canEditDocuments: false,
+    canDeleteDocuments: false,
+    canRunAutomation: false,
+  };
   const [menuDocId, setMenuDocId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
@@ -399,6 +411,10 @@ export default function Sidebar({
 
   const startRename = (doc: Doc) => { setRenamingId(doc.id); setRenameVal(doc.title); };
   const submitRename = (id: string) => {
+    if (!permissions.canEditDocuments) {
+      setRenamingId(null);
+      return;
+    }
     if (renameVal.trim()) onRenameDoc(id, renameVal.trim());
     setRenamingId(null);
   };
@@ -412,9 +428,10 @@ export default function Sidebar({
   }, []);
 
   const handleNewChild = useCallback((parentId: string) => {
+    if (!permissions.canEditDocuments) return;
     setExpandedIds(prev => new Set([...prev, parentId]));
     onNewDoc(parentId);
-  }, [onNewDoc]);
+  }, [onNewDoc, permissions.canEditDocuments]);
 
   // ── DnD sensors ────────────────────────────────────────────────────────
   const sensors = useSensors(
@@ -428,6 +445,7 @@ export default function Sidebar({
   const between = (a: number, b: number) => (a + b) / 2;
 
   const handleDragOver = useCallback(({ active, over }: DragOverEvent) => {
+    if (!permissions.canEditDocuments) return;
     if (!over || active.id === over.id) { setDropInfo(null); return; }
 
     const flat = flattenVisible(tree, expandedIds);
@@ -438,9 +456,14 @@ export default function Sidebar({
     // Determine edge based on relative positions in the flat list
     const edge: DropInfo['edge'] = activeIdx > overIdx ? 'before' : 'after';
     setDropInfo({ id: over.id as string, edge });
-  }, [tree, expandedIds]);
+  }, [tree, expandedIds, permissions.canEditDocuments]);
 
   const handleDragEnd = useCallback(({ active, over }: DragEndEvent) => {
+    if (!permissions.canEditDocuments) {
+      setDraggingId(null);
+      setDropInfo(null);
+      return;
+    }
     setDraggingId(null);
     setDropInfo(null);
     if (!over || active.id === over.id || !onMoveDoc) return;
@@ -474,7 +497,7 @@ export default function Sidebar({
 
     const newPosition = between(prevPos, nextPos);
     onMoveDoc(active.id as string, { parent_id: newParentId, position: newPosition });
-  }, [tree, expandedIds, onMoveDoc]);
+  }, [tree, expandedIds, onMoveDoc, permissions.canEditDocuments]);
 
   const draggingDoc = draggingId ? documents.find(d => d.id === draggingId) : null;
   const avatarLetter = (user?.name || user?.email || '?')[0].toUpperCase();
@@ -504,6 +527,7 @@ export default function Sidebar({
           </span>
         </div>
 
+        {permissions.canEditDocuments ? (
         <button
           onClick={() => { onNewDoc(); onClose?.(); }}
           className="w-6 h-6 flex items-center justify-center rounded-md transition-colors flex-shrink-0"
@@ -514,6 +538,7 @@ export default function Sidebar({
         >
           <Plus size={14} />
         </button>
+        ) : null}
       </div>
 
       <div className="px-3 pt-2.5 pb-1.5 flex-shrink-0">
@@ -576,6 +601,14 @@ export default function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto pb-2 mt-1">
+        {!permissions.canEditDocuments ? (
+          <div className="px-3 pb-2">
+            <ForbiddenState
+              title="Read-only workspace"
+              description="You have view access only. Document creation, editing, and deletion are disabled."
+            />
+          </div>
+        ) : null}
         <div className="flex items-center justify-between px-4 py-1 mb-0.5">
           <span style={{ fontSize: 11, color: 'var(--color-text-quaternary)', fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             文件
@@ -618,6 +651,8 @@ export default function Sidebar({
                   onClose={onClose}
                   draggingId={draggingId}
                   dropInfo={dropInfo}
+                  canEditDocuments={permissions.canEditDocuments}
+                  canDeleteDocuments={permissions.canDeleteDocuments}
                 />
               ))}
             </div>
@@ -634,12 +669,14 @@ export default function Sidebar({
             <span style={{ fontSize: 11, color: 'var(--color-text-quaternary)', fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
               資料庫
             </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); onNewCollection(); }}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <Plus size={11} />
-            </button>
+            {permissions.canEditDocuments ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onNewCollection(); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <Plus size={11} />
+              </button>
+            ) : null}
           </div>
 
           <div className="px-1">
@@ -676,6 +713,7 @@ export default function Sidebar({
         className="flex-shrink-0 px-2 py-2"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
+        {permissions.canEditDocuments ? (
         <button
           onClick={() => { onUpload(); onClose?.(); }}
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
@@ -686,6 +724,7 @@ export default function Sidebar({
           <Upload size={13} style={{ color: 'var(--color-text-tertiary)' }} />
           匯入文件
         </button>
+        ) : null}
 
         {user && (
           <div

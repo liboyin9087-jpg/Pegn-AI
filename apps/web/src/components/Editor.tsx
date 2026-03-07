@@ -771,7 +771,12 @@ export default function Editor({ doc, workspaceId, onOpenAI, focusThreadId, onFo
     if (!workspaceId) return;
     try {
       const { members } = await listWorkspaceMembers(workspaceId);
-      setWorkspaceMembers(members);
+      setWorkspaceMembers((members || []).map((member) => ({
+        user_id: member.user_id,
+        name: member.name || member.email || 'Unknown user',
+        email: member.email,
+        role: member.role,
+      })));
     } catch (error) {
       console.error('載入成員失敗', error);
     }

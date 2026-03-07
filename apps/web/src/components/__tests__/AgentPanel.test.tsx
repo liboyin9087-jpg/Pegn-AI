@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import AgentPanel from '../AgentPanel';
+import type { WorkspaceMembershipSummary } from '../../api/client';
 
 const clientMocks = vi.hoisted(() => ({
   createAgentRun: vi.fn(),
@@ -36,6 +37,32 @@ function makeRun(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+const adminMembership: WorkspaceMembershipSummary = {
+  effectiveRole: 'admin',
+  permissions: ['workspace:read', 'agent:run', 'automation:trigger'],
+  permissionSummary: {
+    canViewWorkspace: true,
+    canManageMembers: true,
+    canManageSettings: true,
+    canEditDocuments: true,
+    canDeleteDocuments: true,
+    canRunAutomation: true,
+  },
+};
+
+const viewerMembership: WorkspaceMembershipSummary = {
+  effectiveRole: 'viewer',
+  permissions: ['workspace:read'],
+  permissionSummary: {
+    canViewWorkspace: true,
+    canManageMembers: false,
+    canManageSettings: false,
+    canEditDocuments: false,
+    canDeleteDocuments: false,
+    canRunAutomation: false,
+  },
+};
+
 describe('AgentPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -62,7 +89,7 @@ describe('AgentPanel', () => {
     clientMocks.createAgentRun.mockResolvedValue(makeRun());
     clientMocks.getAgentRun.mockResolvedValue(makeRun({ status: 'running' }));
 
-    render(<AgentPanel workspaceId="ws-1" activeDoc={null} />);
+    render(<AgentPanel workspaceId="ws-1" activeDoc={null} workspaceMembershipSummary={adminMembership} />);
 
     fireEvent.change(screen.getByPlaceholderText('Ask the agent to investigate a topic...'), {
       target: { value: 'Investigate roadmap' },
@@ -82,18 +109,24 @@ describe('AgentPanel', () => {
 
   it('renders completed state from stream snapshots', async () => {
     clientMocks.createAgentRun.mockResolvedValue(makeRun());
-    clientMocks.getAgentRun.mockResolvedValue(makeRun({ status: 'running' }));
+    clientMocks.getAgentRun
+      .mockResolvedValueOnce(makeRun({ status: 'running' }))
+      .mockResolvedValueOnce(makeRun({
+        status: 'completed',
+        outputSummary: 'Final answer',
+        result: { answer: 'Final answer' },
+      }));
 
-    render(<AgentPanel workspaceId="ws-1" activeDoc={null} />);
+    render(<AgentPanel workspaceId="ws-1" activeDoc={null} workspaceMembershipSummary={adminMembership} />);
 
     fireEvent.change(screen.getByPlaceholderText('Ask the agent to investigate a topic...'), {
       target: { value: 'Investigate roadmap' },
     });
     fireEvent.click(screen.getByText('Run'));
 
+    expect(await screen.findByText('Final answer')).toBeInTheDocument();
     expect(await screen.findByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('Final Output')).toBeInTheDocument();
-    expect(screen.getByText('Final answer')).toBeInTheDocument();
   });
 
   it('renders failed state and retries as a new run', async () => {
@@ -102,7 +135,14 @@ describe('AgentPanel', () => {
       .mockResolvedValueOnce(makeRun({ id: 'run-retry' }));
     clientMocks.getAgentRun
       .mockResolvedValueOnce(makeRun({ id: 'run-failed', status: 'running' }))
-      .mockResolvedValueOnce(makeRun({ id: 'run-retry', status: 'running' }));
+      .mockResolvedValueOnce(makeRun({ id: 'run-failed', status: 'failed', errorSummary: 'Model unavailable' }))
+      .mockResolvedValueOnce(makeRun({ id: 'run-retry', status: 'running' }))
+      .mockResolvedValueOnce(makeRun({
+        id: 'run-retry',
+        status: 'completed',
+        outputSummary: 'Recovered answer',
+        result: { answer: 'Recovered answer' },
+      }));
     clientMocks.streamAgentRun
       .mockImplementationOnce((_runId, _wsId, onData, onDone) => {
         setTimeout(() => {
@@ -134,7 +174,7 @@ describe('AgentPanel', () => {
         return () => {};
       });
 
-    render(<AgentPanel workspaceId="ws-1" activeDoc={null} />);
+    render(<AgentPanel workspaceId="ws-1" activeDoc={null} workspaceMembershipSummary={adminMembership} />);
 
     fireEvent.change(screen.getByPlaceholderText('Ask the agent to investigate a topic...'), {
       target: { value: 'Investigate roadmap' },
@@ -159,11 +199,21 @@ describe('AgentPanel', () => {
       result: { answer: 'Restored answer' },
     }));
 
-    render(<AgentPanel workspaceId="ws-1" activeDoc={null} />);
+    render(<AgentPanel workspaceId="ws-1" activeDoc={null} workspaceMembershipSummary={adminMembership} />);
 
     await waitFor(() => {
       expect(clientMocks.getAgentRun).toHaveBeenCalledWith('run-restored', 'ws-1');
     });
     expect(await screen.findByText('Restored answer')).toBeInTheDocument();
+  });
+
+  it('shows read-only agent state for viewers', async () => {
+    clientMocks.listAgentRuns.mockResolvedValue({ runs: [makeRun({ status: 'completed' })] });
+
+    render(<AgentPanel workspaceId="ws-1" activeDoc={null} workspaceMembershipSummary={viewerMembership} />);
+
+    expect(screen.getByText('Read-only agent access')).toBeInTheDocument();
+    expect(screen.getByText(/only editors and admins can start or retry/i)).toBeInTheDocument();
+    expect(screen.getByText('Run')).toBeDisabled();
   });
 });

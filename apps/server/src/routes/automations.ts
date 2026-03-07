@@ -93,7 +93,7 @@ export function registerAutomationRoutes(app: Express): void {
   });
 
   // ── Get automation by ID ───────────────────────────────────────────────
-  app.get('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: Request, res: Response) => {
+  app.get('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'automation'), async (req: Request, res: Response) => {
     const p = pool;
     if (!p) { res.status(503).json({ error: 'Database unavailable' }); return; }
 
@@ -111,7 +111,7 @@ export function registerAutomationRoutes(app: Express): void {
   });
 
   // ── Update automation ──────────────────────────────────────────────────
-  app.patch('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: Request, res: Response) => {
+  app.patch('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canRunAutomation', 'automation'), async (req: Request, res: Response) => {
     const p = pool;
     if (!p) { res.status(503).json({ error: 'Database unavailable' }); return; }
 
@@ -149,7 +149,7 @@ export function registerAutomationRoutes(app: Express): void {
   });
 
   // ── Delete automation ──────────────────────────────────────────────────
-  app.delete('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: Request, res: Response) => {
+  app.delete('/api/v1/automations/:id', authMiddleware, checkWorkspaceCapability('canRunAutomation', 'automation'), async (req: Request, res: Response) => {
     const p = pool;
     if (!p) { res.status(503).json({ error: 'Database unavailable' }); return; }
 
@@ -167,7 +167,7 @@ export function registerAutomationRoutes(app: Express): void {
   });
 
   // ── Manual trigger ─────────────────────────────────────────────────────
-  app.post('/api/v1/automations/:id/trigger', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: Request, res: Response) => {
+  app.post('/api/v1/automations/:id/trigger', authMiddleware, checkWorkspaceCapability('canRunAutomation', 'automation'), async (req: Request, res: Response) => {
     const p = pool;
     if (!p) { res.status(503).json({ error: 'Database unavailable' }); return; }
 
@@ -197,7 +197,7 @@ export function registerAutomationRoutes(app: Express): void {
   });
 
   // ── Run history ────────────────────────────────────────────────────────
-  app.get('/api/v1/automations/:id/runs', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: Request, res: Response) => {
+  app.get('/api/v1/automations/:id/runs', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'automation'), async (req: Request, res: Response) => {
     const p = pool;
     if (!p) { res.status(503).json({ error: 'Database unavailable' }); return; }
 

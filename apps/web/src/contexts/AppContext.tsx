@@ -14,6 +14,7 @@ export interface AppContextValue {
   workspacePermissions: WorkspacePermissionSummary;
   workspaceMembershipSummary: WorkspaceMembershipSummary | null;
   documents: any[];
+  collections: Collection[];
   activeDoc: any | null;
   setActiveDoc: React.Dispatch<React.SetStateAction<any | null>>;
   handleSelectDoc: (doc: any) => void;

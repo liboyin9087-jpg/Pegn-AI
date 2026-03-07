@@ -21,6 +21,7 @@ type ResourceType =
   | 'collection'
   | 'collection_view'
   | 'document'
+  | 'automation'
   | 'kg_entity'
   | 'comment_thread'
   | 'inbox_notification'
@@ -109,6 +110,13 @@ async function resolveWorkspaceId(req: AuthRequest, resourceType: ResourceType):
       const documentId = req.params.id || req.params.document_id || req.params.documentId;
       if (!documentId) return undefined;
       const result = await p.query('SELECT workspace_id FROM documents WHERE id = $1', [documentId]);
+      return result.rows[0]?.workspace_id;
+    }
+
+    if (resourceType === 'automation') {
+      const automationId = req.params.id || req.params.automation_id || req.params.automationId;
+      if (!automationId) return undefined;
+      const result = await p.query('SELECT workspace_id FROM automations WHERE id = $1', [automationId]);
       return result.rows[0]?.workspace_id;
     }
 

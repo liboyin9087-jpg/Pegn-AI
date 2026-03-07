@@ -6,8 +6,11 @@ import {
   streamAgentRun,
   type AgentRun,
   type AgentRunStep,
+  type WorkspaceMembershipSummary,
 } from '../api/client';
 import AgentRunHistory from './AgentRunHistory';
+import { useOptionalAppContext } from '../contexts/AppContext';
+import ForbiddenState from './ForbiddenState';
 
 const STATUS_COPY: Record<AgentRun['status'], string> = {
   queued: 'Queued',
@@ -75,10 +78,22 @@ function mergeStep(steps: AgentRunStep[], nextStep: AgentRunStep): AgentRunStep[
 export default function AgentPanel({
   workspaceId,
   activeDoc,
+  workspaceMembershipSummary,
 }: {
   workspaceId: string;
   activeDoc: any;
+  workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
 }) {
+  const appContext = useOptionalAppContext();
+  const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
+  const permissions = membership?.permissionSummary ?? {
+    canViewWorkspace: true,
+    canManageMembers: false,
+    canManageSettings: false,
+    canEditDocuments: false,
+    canDeleteDocuments: false,
+    canRunAutomation: false,
+  };
   const [mode, setMode] = useState<AgentMode>('research');
   const [input, setInput] = useState('');
   const [run, setRun] = useState<AgentRun | null>(null);
@@ -195,7 +210,7 @@ export default function AgentPanel({
   }, [restoreRun, stopStreaming, storageKey, workspaceId]);
 
   const handleStart = useCallback(async () => {
-    if (!workspaceId || !input.trim() || createPending) return;
+    if (!permissions.canRunAutomation || !workspaceId || !input.trim() || createPending) return;
 
     setCreatePending(true);
     setSaved(false);
@@ -223,14 +238,18 @@ export default function AgentPanel({
     } finally {
       setCreatePending(false);
     }
-  }, [createPending, input, mode, restoreRun, stopStreaming, storageKey, updateStreamingAnswer, workspaceId]);
+  }, [createPending, input, mode, permissions.canRunAutomation, restoreRun, stopStreaming, storageKey, updateStreamingAnswer, workspaceId]);
 
   const handleRetry = useCallback(async () => {
-    if (run?.status !== 'failed') return;
+    if (!permissions.canRunAutomation || run?.status !== 'failed') return;
     await handleStart();
-  }, [handleStart, run?.status]);
+  }, [handleStart, permissions.canRunAutomation, run?.status]);
 
   const handleSaveToDoc = useCallback(async () => {
+    if (!permissions.canEditDocuments) {
+      setRuntimeError('You have view access only and cannot save agent output to a document.');
+      return;
+    }
     const answer = run?.result?.answer || streamingAnswerRef.current;
     if (!answer || !workspaceId) return;
 
@@ -249,7 +268,7 @@ export default function AgentPanel({
     } catch {
       setRuntimeError('Failed to save result to document');
     }
-  }, [input, mode, run?.result?.answer, workspaceId]);
+  }, [input, mode, permissions.canEditDocuments, run?.result?.answer, workspaceId]);
 
   const handleUseDoc = useCallback(() => {
     if (activeDoc?.title) {
@@ -265,7 +284,7 @@ export default function AgentPanel({
 
   const resultAnswer = typeof run?.result?.answer === 'string' ? run.result.answer : undefined;
   const finalAnswer = resultAnswer || (streamingAnswer.length > 0 ? streamingAnswer : undefined);
-  const canRetry = run?.status === 'failed' && !createPending;
+  const canRetry = permissions.canRunAutomation && run?.status === 'failed' && !createPending;
 
   return (
     <div className="flex h-full flex-col gap-3 bg-surface p-3">
@@ -287,13 +306,21 @@ export default function AgentPanel({
 
       <p className="px-1 text-xs text-text-tertiary">{MODE_CONFIG[mode].desc}</p>
 
+      {!permissions.canRunAutomation ? (
+        <ForbiddenState
+          title="Read-only agent access"
+          description="You can review existing runs, but only editors and admins can start or retry agent and automation runs."
+        />
+      ) : null}
+
       <div className="space-y-2">
         <textarea
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder={MODE_CONFIG[mode].placeholder}
           rows={3}
-          className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:ring-2 focus:ring-accent"
+          disabled={!permissions.canRunAutomation}
+          className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-tertiary focus:ring-2 focus:ring-accent disabled:opacity-60"
           onKeyDown={(event) => {
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
               void handleStart();
@@ -323,7 +350,7 @@ export default function AgentPanel({
           ) : (
             <button
               onClick={() => void handleStart()}
-              disabled={!input.trim() || createPending}
+              disabled={!permissions.canRunAutomation || !input.trim() || createPending}
               className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white transition-colors hover:bg-accent-hover disabled:opacity-40"
             >
               {createPending ? 'Creating...' : 'Run'}
@@ -404,7 +431,7 @@ export default function AgentPanel({
                 <p className="text-xs font-medium text-accent">Final Output</p>
                 <button
                   onClick={() => void handleSaveToDoc()}
-                  disabled={saved || isBusy}
+                  disabled={saved || isBusy || !permissions.canEditDocuments}
                   className="rounded-lg bg-accent-muted px-2 py-0.5 text-xs text-accent transition-colors hover:bg-accent-light disabled:opacity-40"
                 >
                   {saved ? 'Saved' : 'Save to doc'}
