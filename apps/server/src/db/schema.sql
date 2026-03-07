@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    type TEXT,
+    source TEXT,
     content JSONB DEFAULT '{}',
     yjs_state BYTEA,
     index_status TEXT NOT NULL DEFAULT 'pending' CHECK (index_status IN ('pending', 'indexed', 'stale', 'failed')),
@@ -108,6 +110,7 @@ CREATE TABLE IF NOT EXISTS search_index (
     content_vector vector(768), -- Gemini text-embedding-004 dimension
     title TEXT,
     metadata JSONB DEFAULT '{}',
+    indexed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(document_id, block_id)
@@ -117,6 +120,9 @@ CREATE TABLE IF NOT EXISTS search_index (
 CREATE INDEX IF NOT EXISTS idx_documents_workspace_id ON documents(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_documents_updated_at ON documents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_documents_index_status ON documents(index_status);
+CREATE INDEX IF NOT EXISTS idx_documents_workspace_updated_at ON documents(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_workspace_type ON documents(workspace_id, type);
+CREATE INDEX IF NOT EXISTS idx_documents_workspace_source ON documents(workspace_id, source);
 CREATE INDEX IF NOT EXISTS idx_blocks_document_id ON blocks(document_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_parent_id ON blocks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_block_type ON blocks(block_type);
@@ -124,6 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_document_id ON document_snapshots(docum
 CREATE INDEX IF NOT EXISTS idx_snapshots_created_at ON document_snapshots(created_at);
 CREATE INDEX IF NOT EXISTS idx_search_document_id ON search_index(document_id);
 CREATE INDEX IF NOT EXISTS idx_search_block_id ON search_index(block_id);
+CREATE INDEX IF NOT EXISTS idx_search_document_indexed_at ON search_index(document_id, indexed_at DESC);
 
 -- Vector index for similarity search
 CREATE INDEX IF NOT EXISTS idx_search_content_vector ON search_index USING ivfflat (content_vector vector_cosine_ops);
@@ -309,17 +316,23 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type TEXT NOT NULL DEFAULT 'supervisor',
     query TEXT NOT NULL,
+    thread_id TEXT,
     mode TEXT NOT NULL DEFAULT 'auto',
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')) DEFAULT 'queued',
     input_summary TEXT,
     output_summary TEXT,
     error_summary TEXT,
+    prompt_version TEXT,
+    prompt_label TEXT,
+    template_id TEXT,
+    template_version TEXT,
     result JSONB DEFAULT '{}'::jsonb,
     error TEXT,
     token_usage INTEGER DEFAULT 0,
     -- P2-1: Recursive sub-run linkage
     parent_run_id UUID REFERENCES agent_runs(id) ON DELETE CASCADE,
     root_run_id UUID,
+    rerun_of_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
     depth INTEGER NOT NULL DEFAULT 0,
     started_at TIMESTAMP WITH TIME ZONE,
     finished_at TIMESTAMP WITH TIME ZONE,
@@ -348,11 +361,28 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     UNIQUE(run_id, step_key)
 );
 
+CREATE TABLE IF NOT EXISTS agent_artifacts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    mime_type TEXT,
+    size BIGINT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace ON agent_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_user ON agent_runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_created ON agent_runs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_thread_created ON agent_runs(thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status_created ON agent_runs(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_rerun_of ON agent_runs(rerun_of_run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_run ON agent_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_status ON agent_steps(status);
+CREATE INDEX IF NOT EXISTS idx_agent_artifacts_run_created ON agent_artifacts(run_id, created_at DESC);
 DROP TRIGGER IF EXISTS update_agent_runs_updated_at ON agent_runs;
 CREATE TRIGGER update_agent_runs_updated_at BEFORE UPDATE ON agent_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 DROP TRIGGER IF EXISTS update_agent_steps_updated_at ON agent_steps;
@@ -523,6 +553,36 @@ CREATE TRIGGER update_quota_limits_updated_at BEFORE UPDATE ON quota_limits FOR 
 DROP TRIGGER IF EXISTS update_usage_records_updated_at ON usage_records;
 CREATE TRIGGER update_usage_records_updated_at BEFORE UPDATE ON usage_records FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    actor_display TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (
+      event_type IN (
+        'workspace_updated',
+        'member_invited',
+        'invite_revoked',
+        'member_role_changed',
+        'member_removed',
+        'document_deleted',
+        'document_reindexed',
+        'agent_run_rerun',
+        'automation_triggered',
+        'quota_alert_raised'
+      )
+    ),
+    target_type TEXT NOT NULL,
+    target_id TEXT,
+    summary TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_created_at ON audit_logs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_workspace_event_created_at ON audit_logs(workspace_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created_at ON audit_logs(target_type, target_id, created_at DESC);
+
 
 -- ============================================================
 -- Phase 4: Document position for sidebar ordering
@@ -588,6 +648,48 @@ CREATE TABLE IF NOT EXISTS automation_runs (
 CREATE INDEX IF NOT EXISTS idx_automation_runs_automation ON automation_runs(automation_id);
 CREATE INDEX IF NOT EXISTS idx_automation_runs_workspace ON automation_runs(workspace_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    job_type TEXT NOT NULL CHECK (job_type IN ('document_index', 'document_reindex', 'agent_run', 'automation_trigger')),
+    resource_type TEXT,
+    resource_id TEXT,
+    source_domain TEXT NOT NULL,
+    source_run_id TEXT,
+    triggered_by TEXT,
+    triggered_via TEXT,
+    idempotency_key TEXT,
+    correlation_id TEXT,
+    retry_of_job_id UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'timeout')) DEFAULT 'queued',
+    error_code TEXT,
+    error_summary TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    started_at TIMESTAMP WITH TIME ZONE,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    cancel_requested_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS job_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    sequence_no INTEGER NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('queued', 'started', 'progress', 'retry_requested', 'retry_started', 'cancel_requested', 'cancelled', 'failed', 'completed', 'timed_out')),
+    message TEXT,
+    payload JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(job_id, sequence_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_workspace_created_at ON jobs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_workspace_status_created_at ON jobs(workspace_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_workspace_type_created_at ON jobs(workspace_id, job_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_resource_created_at ON jobs(resource_type, resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_correlation_id ON jobs(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_job_events_job_sequence ON job_events(job_id, sequence_no);
 
 -- Trigger event log (for deduplication and audit)
 CREATE TABLE IF NOT EXISTS automation_trigger_events (

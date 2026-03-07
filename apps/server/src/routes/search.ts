@@ -1,23 +1,38 @@
 import type { Express, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
-import { checkPermission } from '../middleware/rbac.js';
+import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { DocumentModel } from '../models/document.js';
 import { observability } from '../services/observability.js';
 import { searchService } from '../services/search.js';
+import { recordAuditLog } from '../services/admin.js';
 
 interface SearchRequest {
   query: string;
   workspace_id?: string;
   workspaceId?: string;
+  q?: string;
+  type?: string;
+  source?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  cursor?: string;
   limit?: number;
   offset?: number;
   filters?: {
     blockType?: string;
     dateFrom?: string;
     dateTo?: string;
+    type?: string;
+    source?: string;
+    updatedFrom?: string;
+    updatedTo?: string;
   };
   hybrid?: boolean;
   vectorWeight?: number;
+}
+
+function resolveWorkspaceId(req: Request, bodyWorkspaceId?: string, queryWorkspaceId?: string) {
+  return bodyWorkspaceId || queryWorkspaceId || ((req as any).workspaceId as string | undefined);
 }
 
 function sendApiError(res: Response, status: number, code: string, message: string, details: unknown = null) {
@@ -31,52 +46,99 @@ function sendApiError(res: Response, status: number, code: string, message: stri
 }
 
 export function registerSearchRoutes(app: Express): void {
-  app.post('/api/v1/search', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+  app.get('/api/v1/search', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
     try {
-      const searchRequest: SearchRequest = req.body;
-      const workspaceId = searchRequest.workspace_id || searchRequest.workspaceId;
+      const query = typeof req.query.q === 'string' ? req.query.q : '';
+      const workspaceId = resolveWorkspaceId(
+        req,
+        undefined,
+        typeof req.query.workspace_id === 'string'
+          ? req.query.workspace_id
+          : typeof req.query.workspaceId === 'string'
+            ? req.query.workspaceId
+            : undefined
+      );
+      const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
 
-      if (!searchRequest.query || typeof searchRequest.query !== 'string') {
+      if (!query || typeof query !== 'string') {
         sendApiError(res, 400, 'BAD_REQUEST', 'Query is required and must be a string');
         return;
       }
+      if (!workspaceId) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'workspace_id is required');
+        return;
+      }
 
-      const results = await searchService.search({
-        query: searchRequest.query,
+      const response = await searchService.searchWorkspaceDocuments({
+        query,
         workspaceId,
-        limit: searchRequest.limit || 20,
-        offset: searchRequest.offset || 0,
-        filters: searchRequest.filters,
-        hybrid: searchRequest.hybrid !== false,
-        vectorWeight: searchRequest.vectorWeight,
+        type: typeof req.query.type === 'string' ? req.query.type : undefined,
+        source: typeof req.query.source === 'string' ? req.query.source : undefined,
+        updatedFrom: typeof req.query.updatedFrom === 'string' ? req.query.updatedFrom : undefined,
+        updatedTo: typeof req.query.updatedTo === 'string' ? req.query.updatedTo : undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
       });
 
-      const duration = Date.now() - startTime;
-      observability.recordSearchOperation(searchRequest.query, duration, results.results.length);
-
-      res.json({
-        results: results.results,
-        total: results.total,
-        query: searchRequest.query,
-        duration,
-        limit: searchRequest.limit || 20,
-        offset: searchRequest.offset || 0,
-      });
+      observability.recordSearchOperation(query, Date.now() - startTime, response.items.length);
+      res.json(response);
     } catch (error) {
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
       observability.error('Search failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
-        query: req.body?.query,
-        duration,
+        query: req.query?.q,
+        durationMs,
       });
 
       sendApiError(res, 500, 'INVALID_STATE', 'Search failed', error instanceof Error ? error.message : 'Unknown error');
     }
   });
 
-  app.get('/api/v1/search/suggestions', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+  app.post('/api/v1/search', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+      const searchRequest: SearchRequest = req.body;
+      const query = searchRequest.query || searchRequest.q;
+      const workspaceId = resolveWorkspaceId(req, searchRequest.workspace_id || searchRequest.workspaceId, undefined);
+
+      if (!query || typeof query !== 'string') {
+        sendApiError(res, 400, 'BAD_REQUEST', 'Query is required and must be a string');
+        return;
+      }
+      if (!workspaceId) {
+        sendApiError(res, 400, 'BAD_REQUEST', 'workspace_id is required');
+        return;
+      }
+
+      const response = await searchService.searchWorkspaceDocuments({
+        query,
+        workspaceId,
+        type: searchRequest.type ?? searchRequest.filters?.type,
+        source: searchRequest.source ?? searchRequest.filters?.source,
+        updatedFrom: searchRequest.updatedFrom ?? searchRequest.filters?.updatedFrom ?? searchRequest.filters?.dateFrom,
+        updatedTo: searchRequest.updatedTo ?? searchRequest.filters?.updatedTo ?? searchRequest.filters?.dateTo,
+        limit: searchRequest.limit,
+        cursor: searchRequest.cursor,
+      });
+
+      observability.recordSearchOperation(query, Date.now() - startTime, response.items.length);
+      res.json(response);
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+      observability.error('Search failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        query: req.body?.query,
+        durationMs,
+      });
+
+      sendApiError(res, 500, 'INVALID_STATE', 'Search failed', error instanceof Error ? error.message : 'Unknown error');
+    }
+  });
+
+  app.get('/api/v1/search/suggestions', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: Request, res: Response) => {
     try {
       const { q: query, workspace_id, workspaceId, limit = 5 } = req.query;
       const resolvedWorkspaceId =
@@ -105,7 +167,7 @@ export function registerSearchRoutes(app: Express): void {
     }
   });
 
-  app.post('/api/v1/search/reindex/:documentId', authMiddleware, checkPermission('workspace:admin', 'document'), async (req: Request, res: Response) => {
+  app.post('/api/v1/search/reindex/:documentId', authMiddleware, checkWorkspaceCapability('canEditDocuments', 'document'), async (req: Request, res: Response) => {
     try {
       const { documentId } = req.params;
       const document = await DocumentModel.findById(documentId);
@@ -114,10 +176,32 @@ export function registerSearchRoutes(app: Express): void {
         return;
       }
 
-      await searchService.enqueueDocumentReindex(documentId, document.workspace_id);
+      const dispatch = await searchService.enqueueDocumentReindex(documentId, document.workspace_id, {
+        triggeredBy: (req as any).userId ?? null,
+        triggeredVia: 'manual',
+      });
 
-      observability.info('Document reindexed', { documentId });
-      res.json({ message: 'Document reindexed successfully', documentId });
+      await recordAuditLog({
+        workspaceId: document.workspace_id,
+        actorId: (req as any).userId ?? null,
+        actorDisplay: (req as any).userEmail ?? (req as any).userId ?? 'Unknown user',
+        eventType: 'document_reindexed',
+        targetType: 'document',
+        targetId: documentId,
+        summary: `Queued manual reindex for ${document.title}`,
+        metadata: {
+          documentTitle: document.title,
+          jobId: dispatch.jobId,
+        },
+      });
+
+      observability.info('Document reindex queued', { documentId, jobId: dispatch.jobId });
+      res.json({
+        documentId,
+        jobId: dispatch.jobId,
+        status: dispatch.status,
+        indexStatus: document.index_status,
+      });
     } catch (error) {
       observability.error('Document reindex failed', {
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -128,7 +212,7 @@ export function registerSearchRoutes(app: Express): void {
     }
   });
 
-  app.post('/api/v1/search/advanced', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+  app.post('/api/v1/search/advanced', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: Request, res: Response) => {
     const startTime = Date.now();
 
     try {
@@ -149,30 +233,26 @@ export function registerSearchRoutes(app: Express): void {
         return;
       }
 
-      const results = await searchService.search({
+      const response = await searchService.searchWorkspaceDocuments({
         query,
         workspaceId: resolvedWorkspaceId,
+        type: filters.type,
+        source: filters.source,
+        updatedFrom: filters.updatedFrom ?? filters.dateFrom,
+        updatedTo: filters.updatedTo ?? filters.dateTo,
         limit,
-        offset,
-        filters: {
-          ...filters,
-          dateFrom: filters.dateFrom,
-          dateTo: filters.dateTo,
-        },
-        hybrid: true,
-        vectorWeight: 0.5,
       });
 
-      let sortedResults = results.results;
+      let sortedResults = response.items;
       if (sortBy !== 'relevance') {
-        sortedResults = [...results.results].sort((a, b) => {
+        sortedResults = [...response.items].sort((a, b) => {
           let comparison = 0;
           switch (sortBy) {
             case 'date':
-              comparison = a.created_at.getTime() - b.created_at.getTime();
+              comparison = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
               break;
             case 'title':
-              comparison = a.document_title.localeCompare(b.document_title);
+              comparison = a.title.localeCompare(b.title);
               break;
             default:
               comparison = a.score - b.score;
@@ -182,18 +262,19 @@ export function registerSearchRoutes(app: Express): void {
       }
 
       const duration = Date.now() - startTime;
-      observability.recordSearchOperation(query, duration, results.results.length);
+      observability.recordSearchOperation(query, duration, response.items.length);
 
       res.json({
-        results: sortedResults,
-        total: results.total,
+        ...response,
+        items: sortedResults,
         query,
-        filters,
-        sortBy,
-        sortOrder,
-        duration,
-        limit,
-        offset,
+        filtersApplied: {
+          ...response.filtersApplied,
+          type: filters.type ?? response.filtersApplied.type,
+          source: filters.source ?? response.filtersApplied.source,
+          updatedFrom: filters.updatedFrom ?? filters.dateFrom ?? response.filtersApplied.updatedFrom,
+          updatedTo: filters.updatedTo ?? filters.dateTo ?? response.filtersApplied.updatedTo,
+        },
       });
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -207,7 +288,7 @@ export function registerSearchRoutes(app: Express): void {
     }
   });
 
-  app.get('/api/v1/search/index-status', authMiddleware, checkPermission('collection:view'), async (req: Request, res: Response) => {
+  app.get('/api/v1/search/index-status', authMiddleware, checkWorkspaceCapability('canViewWorkspace', 'document'), async (req: Request, res: Response) => {
     const workspaceId = ((req as any).workspaceId ?? req.query.workspace_id) as string | undefined;
     if (!workspaceId) {
       sendApiError(res, 400, 'BAD_REQUEST', 'workspace_id required');

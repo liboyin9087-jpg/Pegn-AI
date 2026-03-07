@@ -2,79 +2,200 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import SearchPanel from '../SearchPanel';
+import { AppContextProvider, type AppContextValue } from '../../contexts/AppContext';
 
 const clientMocks = vi.hoisted(() => ({
   search: vi.fn(),
   getSearchIndexStatus: vi.fn(),
+  reindexSearchDocument: vi.fn(),
 }));
 
-vi.mock('../../api/client', () => ({
-  ...clientMocks,
-}));
+vi.mock('../../api/client', async () => {
+  const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
+  return {
+    ...actual,
+    search: clientMocks.search,
+    getSearchIndexStatus: clientMocks.getSearchIndexStatus,
+    reindexSearchDocument: clientMocks.reindexSearchDocument,
+  };
+});
 
-describe('SearchPanel lifecycle states', () => {
+function createSearchResponse(overrides: Partial<any> = {}) {
+  return {
+    items: [
+      {
+        documentId: 'doc-1',
+        blockId: 'block-1',
+        title: 'Pricing Spec',
+        type: 'spec',
+        source: 'manual',
+        snippet: 'Pricing Spec v2 now includes annual discounts.',
+        highlights: [{ field: 'content', text: '...includes annual discounts...' }],
+        matchedFields: ['title', 'content'],
+        indexedAt: '2026-03-07T08:00:00.000Z',
+        updatedAt: '2026-03-07T08:10:00.000Z',
+        isStale: true,
+        staleReason: 'document_updated_after_index',
+        score: 0.91,
+      },
+    ],
+    total: 1,
+    query: 'pricing',
+    normalizedQuery: 'pricing',
+    filtersApplied: {
+      type: null,
+      source: null,
+      updatedFrom: null,
+      updatedTo: null,
+      limit: 10,
+    },
+    facets: {
+      byType: [{ value: 'spec', count: 1 }],
+      bySource: [{ value: 'manual', count: 1 }],
+    },
+    nextCursor: null,
+    durationMs: 22,
+    ...overrides,
+  };
+}
+
+function renderWithPermissions(canEditDocuments = false) {
+  const value: AppContextValue = {
+    user: null,
+    workspace: null,
+    workspacePermissions: {
+      canViewWorkspace: true,
+      canManageMembers: false,
+      canManageSettings: false,
+      canEditDocuments,
+      canDeleteDocuments: canEditDocuments,
+      canRunAutomation: false,
+    },
+    workspaceMembershipSummary: null,
+    documents: [],
+    collections: [],
+    activeDoc: null,
+    setActiveDoc: vi.fn(),
+    handleSelectDoc: vi.fn(),
+    handleNewDoc: vi.fn(async () => undefined),
+    activeCollection: null,
+    setActiveCollection: vi.fn(),
+    handleSelectCollection: vi.fn(),
+    sidebarOpen: true,
+    setSidebarOpen: vi.fn(),
+    presentationMode: false,
+    setPresentationMode: vi.fn(),
+    showTaskModal: false,
+    editingItem: null,
+    openTaskModal: vi.fn(),
+    openEditModal: vi.fn(),
+    closeTaskModal: vi.fn(),
+  };
+
+  return render(
+    <AppContextProvider value={value}>
+      <SearchPanel workspaceId="ws-1" onOpenOperations={vi.fn()} />
+    </AppContextProvider>
+  );
+}
+
+describe('SearchPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  it('renders pending state when documents exist but indexing has not completed', async () => {
     clientMocks.getSearchIndexStatus.mockResolvedValue({
-      totalDocuments: 2,
-      pendingDocuments: 2,
-      indexedDocuments: 0,
-      staleDocuments: 0,
-      failedDocuments: 0,
-      lastIndexedAt: null,
-    });
-
-    render(<SearchPanel workspaceId="ws-1" />);
-
-    expect(await screen.findByText('2 份文件等待索引')).toBeInTheDocument();
-    expect(screen.getByText('文件已存在，但索引尚未完成。')).toBeInTheDocument();
-  });
-
-  it('renders failed state copy when indexing failed', async () => {
-    clientMocks.getSearchIndexStatus.mockResolvedValue({
-      totalDocuments: 1,
+      totalDocuments: 4,
       pendingDocuments: 0,
-      indexedDocuments: 0,
-      staleDocuments: 0,
-      failedDocuments: 1,
-      lastIndexedAt: null,
-    });
-
-    render(<SearchPanel workspaceId="ws-1" />);
-
-    expect(await screen.findByText('1 份文件索引失敗')).toBeInTheDocument();
-    expect(screen.getByText('文件存在，但目前無法完成搜尋索引。')).toBeInTheDocument();
-  });
-
-  it('renders stale hint when search returns no results', async () => {
-    clientMocks.getSearchIndexStatus.mockResolvedValue({
-      totalDocuments: 3,
-      pendingDocuments: 0,
-      indexedDocuments: 2,
+      indexedDocuments: 3,
       staleDocuments: 1,
       failedDocuments: 0,
-      lastIndexedAt: '2026-03-07T10:20:00.000Z',
+      lastIndexedAt: '2026-03-07T08:00:00.000Z',
     });
-    clientMocks.search.mockResolvedValue({
-      results: [],
-      total: 0,
-      duration: 12,
-    });
+  });
 
-    render(<SearchPanel workspaceId="ws-1" />);
+  it('renders search results and stale badge from the API response', async () => {
+    clientMocks.search.mockResolvedValue(createSearchResponse());
+    renderWithPermissions(false);
 
-    fireEvent.change(screen.getByPlaceholderText('搜尋文件內容、標題與索引內容'), {
-      target: { value: 'roadmap' },
+    fireEvent.change(screen.getByPlaceholderText('Search documents, titles, sources, and indexed content'), {
+      target: { value: 'pricing' },
     });
-    fireEvent.click(screen.getByText('搜尋'));
+    fireEvent.click(screen.getByText('Search'));
+
+    expect(await screen.findByText('Pricing Spec')).toBeInTheDocument();
+    expect(screen.getByText('Stale: document updated')).toBeInTheDocument();
+    expect(screen.getByText('Normalized query: pricing')).toBeInTheDocument();
+  });
+
+  it('renders the no-result recovery state', async () => {
+    clientMocks.search.mockResolvedValue(
+      createSearchResponse({
+        items: [],
+        total: 0,
+        facets: { byType: [], bySource: [] },
+      })
+    );
+    renderWithPermissions(false);
+
+    fireEvent.change(screen.getByPlaceholderText('Search documents, titles, sources, and indexed content'), {
+      target: { value: 'unknown topic' },
+    });
+    fireEvent.click(screen.getByText('Search'));
+
+    expect(await screen.findByText('No search results')).toBeInTheDocument();
+    expect(screen.getByText(/Try a different keyword, remove filters/i)).toBeInTheDocument();
+  });
+
+  it('re-queries when filters change', async () => {
+    clientMocks.search.mockResolvedValue(createSearchResponse());
+    renderWithPermissions(false);
+
+    fireEvent.change(screen.getByPlaceholderText('Search documents, titles, sources, and indexed content'), {
+      target: { value: 'pricing' },
+    });
+    fireEvent.click(screen.getByText('Search'));
 
     await waitFor(() => {
-      expect(clientMocks.search).toHaveBeenCalledWith('roadmap', 'ws-1', 20, true);
+      expect(clientMocks.search).toHaveBeenCalledTimes(1);
     });
-    expect(await screen.findByText('目前沒有符合的搜尋結果')).toBeInTheDocument();
-    expect(screen.getByText('部分文件索引已過期，搜尋結果可能尚未反映最新內容。')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Type filter'), { target: { value: 'spec' } });
+
+    await waitFor(() => {
+      expect(clientMocks.search).toHaveBeenCalledTimes(2);
+    });
+    expect(clientMocks.search).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        q: 'pricing',
+        type: 'spec',
+      })
+    );
+  });
+
+  it('reindexes stale results and refreshes the current query', async () => {
+    clientMocks.search.mockResolvedValue(createSearchResponse());
+    clientMocks.reindexSearchDocument.mockResolvedValue({
+      documentId: 'doc-1',
+      jobId: 'job-1',
+      status: 'queued',
+      indexStatus: 'stale',
+    });
+
+    renderWithPermissions(true);
+
+    fireEvent.change(screen.getByPlaceholderText('Search documents, titles, sources, and indexed content'), {
+      target: { value: 'pricing' },
+    });
+    fireEvent.click(screen.getByText('Search'));
+    expect(await screen.findByText('Pricing Spec')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Reindex document'));
+
+    await waitFor(() => {
+      expect(clientMocks.reindexSearchDocument).toHaveBeenCalledWith('doc-1');
+    });
+    await waitFor(() => {
+      expect(clientMocks.search).toHaveBeenCalledTimes(2);
+    });
   });
 });

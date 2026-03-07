@@ -5,16 +5,7 @@ import {
   Search, FileText, Plus, Upload, Sparkles, X,
   PanelLeft, Keyboard, ChevronRight, Loader2, Zap,
 } from 'lucide-react';
-import { search as backendSearch } from '../api/client';
-
-interface SearchResultItem {
-  document_id?: string;
-  document_title?: string;
-  title?: string;
-  content: string;
-  score: number;
-  block_type?: string;
-}
+import { search as backendSearch, type SearchResultItem } from '../api/client';
 
 interface Doc { id: string; title: string; metadata?: any; updatedAt?: string; }
 
@@ -45,8 +36,8 @@ export default function CommandBar({
   const runSearch = useCallback(async (q: string) => {
     if (!q.trim() || !workspaceId) { setSearchResults([]); setSearching(false); return; }
     try {
-      const res = await backendSearch(q, workspaceId, 6);
-      setSearchResults(res.results || []);
+      const res = await backendSearch({ q, workspaceId, limit: 6 });
+      setSearchResults(res.items || []);
     } catch {
       setSearchResults([]);
     } finally {
@@ -186,11 +177,11 @@ export default function CommandBar({
                     {searchResults.map((r, i) => (
                       <Command.Item
                         key={i}
-                        value={`search_${i}_${r.document_id ?? i}`}
+                        value={`search_${i}_${r.documentId ?? i}`}
                         onSelect={() => {
-                          if (r.document_id) {
-                            const doc = documents.find(d => d.id === r.document_id);
-                            onSelectDoc(doc ?? { id: r.document_id!, title: r.document_title || r.title || '文件' });
+                          if (r.documentId) {
+                            const doc = documents.find(d => d.id === r.documentId);
+                            onSelectDoc(doc ?? { id: r.documentId, title: r.title || 'Document' });
                           }
                           onClose();
                         }}
@@ -203,10 +194,10 @@ export default function CommandBar({
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="truncate" style={{ fontSize: 13.5, color: 'var(--color-text-primary)', lineHeight: '18px', fontWeight: 500 }}>
-                              {r.document_title || r.title || '未命名'}
+                              {r.title || 'Untitled document'}
                             </p>
                             <p className="line-clamp-1" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', lineHeight: '16px', marginTop: 1 }}>
-                              {r.content.slice(0, 100)}
+                              {r.snippet.slice(0, 100)}
                             </p>
                           </div>
                           <span style={{ fontSize: 10, color: 'var(--color-text-quaternary)', flexShrink: 0, fontFamily: 'monospace' }}>

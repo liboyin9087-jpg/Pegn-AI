@@ -4,6 +4,7 @@ import { observability } from '../services/observability.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { getWorkspaceMembershipSummary } from '../lib/workspaceRoles.js';
+import { recordAuditLog } from '../services/admin.js';
 
 function withGovernanceSummary<T extends Record<string, any>>(workspace: T, membership: ReturnType<typeof getWorkspaceMembershipSummary>) {
   if (!membership) return workspace;
@@ -107,6 +108,20 @@ export function registerWorkspaceRoutes(app: Express): void {
         res.status(404).json({ error: 'Workspace not found' });
         return;
       }
+      await recordAuditLog({
+        workspaceId: req.params.workspaceId,
+        actorId: req.userId ?? null,
+        actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+        eventType: 'workspace_updated',
+        targetType: 'workspace',
+        targetId: req.params.workspaceId,
+        summary: `Workspace settings updated for ${workspace.name}`,
+        metadata: {
+          name: workspace.name,
+          hasDescription: description !== undefined,
+          hasSettings: settings !== undefined,
+        },
+      });
       res.json(withGovernanceSummary(workspace, req.workspaceMembershipSummary ?? null));
     } catch {
       res.status(500).json({ error: 'Failed to update workspace' });

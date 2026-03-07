@@ -5,6 +5,7 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { observability } from '../services/observability.js';
 import { isFeatureEnabled } from '../services/featureFlags.js';
+import { recordAuditLog } from '../services/admin.js';
 
 type InviteRole = 'admin' | 'editor' | 'viewer';
 
@@ -104,6 +105,17 @@ export function registerInviteRoutes(app: Express): void {
           invitedBy: req.userId
         });
 
+        await recordAuditLog({
+          workspaceId,
+          actorId: req.userId ?? null,
+          actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+          eventType: 'member_invited',
+          targetType: 'invite',
+          targetId: invite.id,
+          summary: `Invited ${email} as ${role}`,
+          metadata: { email, role },
+        });
+
         res.status(201).json({
           invite: {
             ...invite,
@@ -189,6 +201,17 @@ export function registerInviteRoutes(app: Express): void {
           res.status(404).json({ error: 'Pending invite not found' });
           return;
         }
+
+        await recordAuditLog({
+          workspaceId,
+          actorId: req.userId ?? null,
+          actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+          eventType: 'invite_revoked',
+          targetType: 'invite',
+          targetId: inviteId,
+          summary: `Revoked pending invite ${inviteId}`,
+          metadata: {},
+        });
 
         res.json({ success: true, invite_id: inviteId });
       } catch (error) {

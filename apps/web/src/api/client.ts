@@ -139,6 +139,52 @@ export interface SearchIndexStatusSummary {
 
 export type SearchIndexStatusResponse = SearchIndexStatusSummary;
 
+export interface SearchHighlight {
+  field: 'title' | 'content' | 'source' | 'type';
+  text: string;
+}
+
+export interface SearchFacetBucket {
+  value: string;
+  count: number;
+}
+
+export interface SearchResultItem {
+  documentId: string;
+  blockId?: string | null;
+  title: string;
+  type: string;
+  source: string;
+  snippet: string;
+  highlights: SearchHighlight[];
+  matchedFields: Array<'title' | 'content' | 'source' | 'type'>;
+  indexedAt: string | null;
+  updatedAt: string;
+  isStale: boolean;
+  staleReason: 'document_updated_after_index' | 'document_marked_stale' | 'index_failed' | 'not_indexed' | null;
+  score: number;
+}
+
+export interface SearchResponse {
+  items: SearchResultItem[];
+  total: number;
+  query: string;
+  normalizedQuery: string;
+  filtersApplied: {
+    type: string | null;
+    source: string | null;
+    updatedFrom: string | null;
+    updatedTo: string | null;
+    limit: number;
+  };
+  facets: {
+    byType: SearchFacetBucket[];
+    bySource: SearchFacetBucket[];
+  };
+  nextCursor: string | null;
+  durationMs: number;
+}
+
 export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
 
 export interface WorkspacePermissionSummary {
@@ -154,6 +200,95 @@ export interface WorkspaceMembershipSummary {
   effectiveRole: WorkspaceRole;
   permissions: string[];
   permissionSummary: WorkspacePermissionSummary;
+}
+
+export interface AuditLogItem {
+  id: string;
+  actorId: string | null;
+  actorDisplay: string;
+  eventType:
+    | 'workspace_updated'
+    | 'member_invited'
+    | 'invite_revoked'
+    | 'member_role_changed'
+    | 'member_removed'
+    | 'document_deleted'
+    | 'document_reindexed'
+    | 'agent_run_rerun'
+    | 'automation_triggered'
+    | 'quota_alert_raised';
+  targetType: string;
+  targetId: string | null;
+  summary: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface UsageQuotaSummary {
+  documentsLimit?: number | null;
+  storageBytesLimit?: number | null;
+  agentRunsMonthlyLimit?: number | null;
+  percentUsed: number;
+  thresholdReached: boolean;
+}
+
+export interface UsageSummary {
+  documentsCount: number;
+  indexedDocumentsCount: number;
+  agentRunsLast7d: number;
+  agentRunsLast30d: number;
+  failedJobsLast7d: number;
+  failedJobsLast30d: number;
+  artifactsBytes: number;
+  quota: UsageQuotaSummary;
+  quotaStatus: 'ok' | 'warning' | 'exceeded';
+}
+
+export interface AdminAlert {
+  id: string;
+  type: 'recent_failed_jobs_spike' | 'stale_documents_present' | 'indexing_failures_present' | 'quota_threshold_reached';
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  description: string;
+  relatedTargetType: string | null;
+  relatedTargetId: string | null;
+  createdAt: string;
+}
+
+export interface AdminSummary {
+  workspace: {
+    id: string;
+    name: string;
+    description: string | null;
+    updatedAt: string | null;
+  } | null;
+  memberCounts: {
+    membersTotal: number;
+  };
+  documentsSummary: {
+    documentsTotal: number;
+    indexedDocumentsTotal: number;
+    staleDocumentsTotal: number;
+  };
+  searchSummary: {
+    totalDocuments: number;
+    pendingDocuments: number;
+    indexedDocuments: number;
+    staleDocuments: number;
+    failedDocuments: number;
+    lastIndexedAt: string | null;
+  };
+  agentSummary: {
+    agentRunsLast7d: number;
+    agentRunsLast30d: number;
+  };
+  jobsSummary: WorkspaceJobSummary;
+  usageSummary: UsageSummary;
+  alertsSummary: {
+    total: number;
+    critical: number;
+    warning: number;
+  };
 }
 
 export interface WorkspaceRecord extends WorkspaceMembershipSummary {
@@ -211,11 +346,20 @@ export interface AgentRun {
   workspaceId: string;
   userId: string;
   type: string;
+  threadId?: string | null;
   mode: 'auto' | 'hybrid' | 'graph';
   status: AgentRunStatus;
+  title?: string;
+  input?: string;
   inputSummary: string;
+  output?: string | null;
   outputSummary?: string | null;
   errorSummary?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  rerunOfRunId?: string | null;
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -223,8 +367,166 @@ export interface AgentRun {
   rootRunId?: string | null;
   depth: number;
   tokenUsage?: number | null;
+  jobId?: string | null;
+  lastJobId?: string | null;
   result?: { answer?: string; [key: string]: unknown } | null;
+  citations?: AgentCitation[];
+  relatedArtifacts?: AgentRunArtifact[];
   steps: AgentRunStep[];
+}
+
+export interface AgentCitation {
+  id: string;
+  title: string;
+  sourceType: string;
+  sourceId: string;
+  snippet: string;
+  href?: string | null;
+}
+
+export interface AgentRunArtifact {
+  artifactId: string;
+  type: string;
+  title: string;
+  mimeType?: string | null;
+  size?: number | null;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AgentRunListItem {
+  runId: string;
+  threadId?: string | null;
+  status: AgentRunStatus;
+  title: string;
+  inputPreview: string;
+  outputPreview: string;
+  errorSummary?: string | null;
+  jobId?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  rerunOfRunId?: string | null;
+}
+
+export interface AgentRunDetail {
+  runId: string;
+  workspaceId: string;
+  threadId?: string | null;
+  type?: string;
+  mode?: 'auto' | 'hybrid' | 'graph';
+  title?: string;
+  status: AgentRunStatus;
+  input: string;
+  inputSummary?: string;
+  output?: string | null;
+  outputSummary?: string | null;
+  errorCode?: string | null;
+  errorSummary?: string | null;
+  jobId?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  citations: AgentCitation[];
+  relatedArtifacts: AgentRunArtifact[];
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  rerunOfRunId?: string | null;
+  steps?: AgentRunStep[];
+}
+
+export type JobType =
+  | 'document_index'
+  | 'document_reindex'
+  | 'agent_run'
+  | 'automation_trigger';
+
+export type JobStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout';
+
+export interface JobRecord {
+  id: string;
+  workspaceId: string;
+  jobType: JobType;
+  resourceType?: string | null;
+  resourceId?: string | null;
+  sourceDomain: string;
+  sourceRunId?: string | null;
+  triggeredBy?: string | null;
+  triggeredVia?: 'manual' | 'schedule' | 'system' | null;
+  status: JobStatus;
+  errorCode?: string | null;
+  errorSummary?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  retryOfJobId?: string | null;
+  cancelRequestedAt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface JobEventRecord {
+  id: string;
+  jobId: string;
+  sequenceNo: number;
+  eventType:
+    | 'queued'
+    | 'started'
+    | 'progress'
+    | 'retry_requested'
+    | 'retry_started'
+    | 'cancel_requested'
+    | 'cancelled'
+    | 'failed'
+    | 'completed'
+    | 'timed_out';
+  message?: string | null;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface WorkspaceJobSummary {
+  total: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  timeout: number;
+  byType: Record<JobType, number>;
+  latestFailedAt: string | null;
+}
+
+export interface JobListResponse {
+  items: JobRecord[];
+  nextCursor: string | null;
+}
+
+export interface SearchJobResponse {
+  documentId: string;
+  jobId: string;
+  status: JobStatus;
+  indexStatus?: DocumentIndexStatus;
+}
+
+export interface AutomationTriggerResponse {
+  triggered: boolean;
+  automation_id: string;
+  jobId: string;
+  status: JobStatus;
+  message: string;
 }
 
 export type { OfflineQueueItem };
@@ -354,6 +656,29 @@ export const getMe = () => api<{ user: any }>('/auth/me');
 export const listWorkspaces = () => api<{ workspaces: WorkspaceRecord[] }>('/workspaces');
 export const createWorkspace = (name: string) =>
   api<WorkspaceRecord>('/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+export const getWorkspaceAdminSummary = (workspaceId: string) =>
+  api<AdminSummary>(`/workspaces/${workspaceId}/admin/summary`);
+export const listWorkspaceAuditLogs = (
+  workspaceId: string,
+  query: {
+    eventType?: AuditLogItem['eventType'];
+    targetType?: string;
+    cursor?: string;
+    limit?: number;
+  } = {}
+) => {
+  const params = new URLSearchParams();
+  if (query.eventType) params.set('eventType', query.eventType);
+  if (query.targetType) params.set('targetType', query.targetType);
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.limit) params.set('limit', String(query.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return api<{ items: AuditLogItem[]; nextCursor: string | null }>(`/workspaces/${workspaceId}/audit-logs${suffix}`);
+};
+export const getWorkspaceUsage = (workspaceId: string) =>
+  api<UsageSummary>(`/workspaces/${workspaceId}/usage`);
+export const getWorkspaceAdminAlerts = (workspaceId: string) =>
+  api<{ items: AdminAlert[] }>(`/workspaces/${workspaceId}/admin/alerts`);
 
 // ── Documents ────────────────────────────────────────────────
 export const listDocuments = (wsId: string) =>
@@ -379,14 +704,37 @@ export const updateDocumentQueued = (id: string, data: any) =>
   });
 
 // ── Search ───────────────────────────────────────────────────
-export const search = (query: string, wsId: string, limit = 10, hybrid = true) =>
-  api<{ results: any[]; total: number; duration: number }>('/search', {
-    method: 'POST',
-    body: JSON.stringify({ query, workspace_id: wsId, limit, hybrid }),
+export const search = (params: {
+  workspaceId: string;
+  q: string;
+  type?: string;
+  source?: string;
+  updatedFrom?: string;
+  updatedTo?: string;
+  limit?: number;
+  cursor?: string;
+}) => {
+  const searchParams = new URLSearchParams({
+    workspace_id: params.workspaceId,
+    q: params.q,
   });
+  if (params.type) searchParams.set('type', params.type);
+  if (params.source) searchParams.set('source', params.source);
+  if (params.updatedFrom) searchParams.set('updatedFrom', params.updatedFrom);
+  if (params.updatedTo) searchParams.set('updatedTo', params.updatedTo);
+  if (params.limit) searchParams.set('limit', String(params.limit));
+  if (params.cursor) searchParams.set('cursor', params.cursor);
+  return api<SearchResponse>(`/search?${searchParams.toString()}`);
+};
 
 export const getSearchIndexStatus = (wsId: string) =>
   api<SearchIndexStatusResponse>(`/search/index-status?workspace_id=${wsId}`);
+
+export const reindexSearchDocument = (documentId: string) =>
+  api<SearchJobResponse>(`/search/reindex/${documentId}`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 
 export const knowledgeQuery = (query: string, wsId: string, mode: 'auto' | 'hybrid' | 'graph' = 'auto') =>
   api<{
@@ -457,7 +805,9 @@ export const startSummarizeAgent = (text: string, wsId: string) =>
     body: JSON.stringify({ text, workspace_id: wsId }),
   });
 export const createAgentRun = (input: string, wsId: string, options?: { mode?: 'auto' | 'hybrid' | 'graph'; template?: string }) =>
-  api<AgentRun>('/agents/runs', {
+  api<AgentRun & { runId?: string }>(
+    '/agents/runs',
+    {
     method: 'POST',
     body: JSON.stringify({
       input,
@@ -465,13 +815,88 @@ export const createAgentRun = (input: string, wsId: string, options?: { mode?: '
       ...(options?.mode ? { mode: options.mode } : {}),
       ...(options?.template ? { template: options.template } : {}),
     }),
-  });
+    }
+  );
 
 export const getAgentRun = (runId: string, wsId: string) =>
-  api<AgentRun>(`/agents/runs/${runId}?workspace_id=${encodeURIComponent(wsId)}`);
+  api<AgentRunDetail>(`/agents/runs/${runId}?workspace_id=${encodeURIComponent(wsId)}`);
 
-export const listAgentRuns = (wsId: string, limit = 10) =>
-  api<{ runs: AgentRun[] }>(`/agents/runs?workspace_id=${encodeURIComponent(wsId)}&limit=${limit}`);
+export const listAgentRuns = (
+  wsId: string,
+  query: {
+    threadId?: string;
+    status?: AgentRunStatus;
+    agentType?: string;
+    cursor?: string;
+    limit?: number;
+  } = {}
+) => {
+  const params = new URLSearchParams({ workspace_id: wsId });
+  if (query.threadId) params.set('threadId', query.threadId);
+  if (query.status) params.set('status', query.status);
+  if (query.agentType) params.set('agentType', query.agentType);
+  if (query.cursor) params.set('cursor', query.cursor);
+  params.set('limit', String(query.limit ?? 10));
+  return api<{ items: AgentRunListItem[]; nextCursor: string | null }>(`/agents/runs?${params.toString()}`);
+};
+
+export const getAgentRunArtifacts = (runId: string, wsId: string) =>
+  api<{ items: AgentRunArtifact[] }>(`/agents/runs/${runId}/artifacts?workspace_id=${encodeURIComponent(wsId)}`);
+
+export const rerunAgentRun = (runId: string, wsId: string) =>
+  api<{ runId: string; jobId: string | null; status: AgentRunStatus; rerunOfRunId: string }>(
+    `/agents/runs/${runId}/rerun?workspace_id=${encodeURIComponent(wsId)}`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const listWorkspaceJobs = (
+  workspaceId: string,
+  query: {
+    status?: JobStatus;
+    jobType?: JobType;
+    resourceType?: string;
+    resourceId?: string;
+    cursor?: string;
+    limit?: number;
+  } = {}
+) => {
+  const params = new URLSearchParams();
+  if (query.status) params.set('status', query.status);
+  if (query.jobType) params.set('jobType', query.jobType);
+  if (query.resourceType) params.set('resourceType', query.resourceType);
+  if (query.resourceId) params.set('resourceId', query.resourceId);
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (query.limit) params.set('limit', String(query.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return api<JobListResponse>(`/workspaces/${workspaceId}/jobs${suffix}`);
+};
+
+export const getWorkspaceJobSummary = (workspaceId: string) =>
+  api<WorkspaceJobSummary>(`/workspaces/${workspaceId}/jobs/summary`);
+
+export const getWorkspaceJob = (workspaceId: string, jobId: string) =>
+  api<JobRecord>(`/workspaces/${workspaceId}/jobs/${jobId}`);
+
+export const getWorkspaceJobEvents = (workspaceId: string, jobId: string) =>
+  api<{ items: JobEventRecord[] }>(`/workspaces/${workspaceId}/jobs/${jobId}/events`);
+
+export const retryWorkspaceJob = (workspaceId: string, jobId: string) =>
+  api<{ jobId: string; retryOfJobId: string; status: JobStatus; runId?: string }>(
+    `/workspaces/${workspaceId}/jobs/${jobId}/retry`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const cancelWorkspaceJob = (workspaceId: string, jobId: string) =>
+  api<{ jobId: string; status: JobStatus; cancelRequestedAt: string | null }>(
+    `/workspaces/${workspaceId}/jobs/${jobId}/cancel`,
+    { method: 'POST', body: JSON.stringify({}) }
+  );
+
+export const triggerAutomationJob = (automationId: string) =>
+  api<AutomationTriggerResponse>(`/automations/${automationId}/trigger`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 
 export function streamAgentRun(
   runId: string,

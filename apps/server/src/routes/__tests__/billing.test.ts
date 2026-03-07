@@ -8,13 +8,15 @@ const mockPool = { query: vi.fn() };
 vi.mock('../../db/client.js', () => ({ pool: mockPool }));
 
 /* ── Service mocks ───────────────────────────────────────── */
-const mockGetWorkspaceUsage = vi.fn();
 const mockCheckQuota = vi.fn();
 const mockUpdateQuotaLimits = vi.fn();
 vi.mock('../../services/quota.js', () => ({
-  getWorkspaceUsage: (...args: any[]) => mockGetWorkspaceUsage(...args),
   checkQuota: (...args: any[]) => mockCheckQuota(...args),
   updateQuotaLimits: (...args: any[]) => mockUpdateQuotaLimits(...args),
+}));
+const mockGetWorkspaceUsageSummary = vi.fn();
+vi.mock('../../services/admin.js', () => ({
+  getWorkspaceUsageSummary: (...args: any[]) => mockGetWorkspaceUsageSummary(...args),
 }));
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -49,12 +51,16 @@ describe('GET /api/v1/billing/usage', () => {
 
   it('returns 200 with usage data for admin', async () => {
     setupMember('admin-user', 'ws-1', 'admin');
-    mockGetWorkspaceUsage.mockResolvedValue({
-      ai_tokens: { used: 1000, limit: 100000 },
-      ai_calls: { used: 5, limit: 500 },
-      agent_runs: { used: 2, limit: 50 },
-      cost_usd: 0.01,
-      cost_usd_ceiling: null,
+    mockGetWorkspaceUsageSummary.mockResolvedValue({
+      documentsCount: 10,
+      indexedDocumentsCount: 8,
+      agentRunsLast7d: 3,
+      agentRunsLast30d: 9,
+      failedJobsLast7d: 1,
+      failedJobsLast30d: 2,
+      artifactsBytes: 2048,
+      quota: { percentUsed: 25, thresholdReached: false },
+      quotaStatus: 'ok',
     });
     const app = await createApp();
     const token = signToken('admin-user', 'admin@example.com');
@@ -64,8 +70,8 @@ describe('GET /api/v1/billing/usage', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('ai_tokens');
-    expect(mockGetWorkspaceUsage).toHaveBeenCalledWith('ws-1');
+    expect(res.body).toHaveProperty('documentsCount', 10);
+    expect(mockGetWorkspaceUsageSummary).toHaveBeenCalledWith('ws-1');
   });
 
   it('returns 403 for non-admin member', async () => {
@@ -121,7 +127,7 @@ describe('GET /api/v1/billing/quota', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/resource must be one of/i);
+    expect(res.body.error.message).toMatch(/resource must be one of/i);
   });
 
   it('returns 400 when resource param is missing', async () => {
@@ -144,9 +150,16 @@ describe('PUT /api/v1/billing/quota', () => {
   it('returns 200 after updating quota limits (admin)', async () => {
     setupMember('admin-user', 'ws-3', 'admin');
     mockUpdateQuotaLimits.mockResolvedValue(undefined);
-    mockGetWorkspaceUsage.mockResolvedValue({
-      ai_tokens: { used: 0, limit: 200000 },
-      cost_usd_ceiling: 5.0,
+    mockGetWorkspaceUsageSummary.mockResolvedValue({
+      documentsCount: 0,
+      indexedDocumentsCount: 0,
+      agentRunsLast7d: 0,
+      agentRunsLast30d: 0,
+      failedJobsLast7d: 0,
+      failedJobsLast30d: 0,
+      artifactsBytes: 0,
+      quota: { percentUsed: 0, thresholdReached: false },
+      quotaStatus: 'ok',
     });
     const app = await createApp();
     const token = signToken('admin-user', 'admin@example.com');
@@ -178,7 +191,7 @@ describe('PUT /api/v1/billing/quota', () => {
       .send({ workspace_id: 'ws-3' }); // no quota fields
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/no valid fields/i);
+    expect(res.body.error.message).toMatch(/no valid fields/i);
   });
 
   it('returns 403 for non-admin user', async () => {

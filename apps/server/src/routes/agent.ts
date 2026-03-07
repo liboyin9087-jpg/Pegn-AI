@@ -3,8 +3,11 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import {
   createAndStartAgentRun,
+  getAgentRunArtifacts,
   getAgentRunById,
+  getAgentRunDetail,
   listAgentRuns,
+  rerunAgentRun,
   startSupervisorRun,
   subscribeToRun,
 } from '../services/agent.js';
@@ -12,6 +15,7 @@ import { isFeatureEnabled } from '../services/featureFlags.js';
 import { checkQuota, recordUsage } from '../services/quota.js';
 import { getWorkspaceIdFromRequest } from '../services/request.js';
 import { pool } from '../db/client.js';
+import { recordAuditLog } from '../services/admin.js';
 
 function sendApiError(res: Response, status: number, code: string, message: string, details: unknown = null) {
   res.status(status).json({
@@ -67,7 +71,7 @@ function attachRunReadRoute(app: Express, path: string) {
       return;
     }
 
-    const run = await getAgentRunById(runId, workspaceId, req.userId!);
+    const run = await getAgentRunDetail(runId, workspaceId, req.userId!);
     if (!run) {
       sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
       return;
@@ -177,10 +181,15 @@ export function registerAgentRoutes(app: Express): void {
         input,
         mode,
         template,
+        threadId: typeof req.body?.thread_id === 'string' ? req.body.thread_id : null,
+        templateId: typeof req.body?.template_id === 'string' ? req.body.template_id : template,
+        templateVersion: typeof req.body?.template_version === 'string' ? req.body.template_version : 'v1',
+        promptVersion: typeof req.body?.prompt_version === 'string' ? req.body.prompt_version : 'v1',
+        promptLabel: typeof req.body?.prompt_label === 'string' ? req.body.prompt_label : template,
       });
 
       await recordUsage(workspaceId, req.userId!, 'agent_runs', 1);
-      res.status(201).json(run);
+      res.status(201).json({ ...run, runId: run.id });
     } catch (error) {
       sendApiError(res, 500, 'INVALID_STATE', 'Failed to create agent run', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -194,10 +203,20 @@ export function registerAgentRoutes(app: Express): void {
     }
 
     const limit = Math.max(1, Math.min(50, parseInt(String(req.query.limit ?? '10'), 10) || 10));
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const threadId = typeof req.query.threadId === 'string' ? req.query.threadId : null;
+    const agentType = typeof req.query.agentType === 'string' ? req.query.agentType : null;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
 
     try {
-      const runs = await listAgentRuns(workspaceId, req.userId!, limit);
-      res.json({ runs });
+      const runs = await listAgentRuns(workspaceId, req.userId!, {
+        limit,
+        cursor,
+        threadId,
+        status: status as any,
+        agentType,
+      });
+      res.json(runs);
     } catch (error) {
       sendApiError(res, 500, 'INVALID_STATE', 'Failed to list agent runs', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -205,6 +224,118 @@ export function registerAgentRoutes(app: Express): void {
 
   attachRunReadRoute(app, '/api/v1/agents/runs/:run_id');
   attachRunReadRoute(app, '/api/v1/agents/runs/:runId');
+
+  app.get('/api/v1/agents/runs/:run_id/artifacts', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
+    const runId = req.params.run_id;
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
+      return;
+    }
+
+    const run = await getAgentRunById(runId, workspaceId, req.userId!);
+    if (!run) {
+      sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
+      return;
+    }
+
+    const items = await getAgentRunArtifacts(runId, workspaceId, req.userId!);
+    res.json({ items });
+  });
+
+  app.get('/api/v1/agents/runs/:runId/artifacts', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {
+    const runId = req.params.runId;
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
+      return;
+    }
+
+    const run = await getAgentRunById(runId, workspaceId, req.userId!);
+    if (!run) {
+      sendApiError(res, 404, 'NOT_FOUND', 'Run not found');
+      return;
+    }
+
+    const items = await getAgentRunArtifacts(runId, workspaceId, req.userId!);
+    res.json({ items });
+  });
+
+  app.post('/api/v1/agents/runs/:run_id/rerun', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const runId = req.params.run_id;
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
+      return;
+    }
+
+    try {
+      const run = await rerunAgentRun(runId, workspaceId, req.userId!);
+      await recordAuditLog({
+        workspaceId,
+        actorId: req.userId ?? null,
+        actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+        eventType: 'agent_run_rerun',
+        targetType: 'agent_run',
+        targetId: run.id,
+        summary: `Reran agent run ${runId}`,
+        metadata: {
+          rerunOfRunId: runId,
+          newRunId: run.id,
+          jobId: run.jobId ?? null,
+        },
+      });
+      res.status(201).json({
+        runId: run.id,
+        jobId: run.jobId ?? null,
+        status: run.status,
+        rerunOfRunId: run.rerunOfRunId ?? runId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const code = message === 'Run not found' ? 'NOT_FOUND' : 'INVALID_STATE';
+      const statusCode = message === 'Run not found' ? 404 : 500;
+      sendApiError(res, statusCode, code, message);
+    }
+  });
+
+  app.post('/api/v1/agents/runs/:runId/rerun', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
+    const runId = req.params.runId;
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (!runId || !workspaceId) {
+      sendApiError(res, 400, 'BAD_REQUEST', 'run_id and workspace_id are required');
+      return;
+    }
+
+    try {
+      const run = await rerunAgentRun(runId, workspaceId, req.userId!);
+      await recordAuditLog({
+        workspaceId,
+        actorId: req.userId ?? null,
+        actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+        eventType: 'agent_run_rerun',
+        targetType: 'agent_run',
+        targetId: run.id,
+        summary: `Reran agent run ${runId}`,
+        metadata: {
+          rerunOfRunId: runId,
+          newRunId: run.id,
+          jobId: run.jobId ?? null,
+        },
+      });
+      res.status(201).json({
+        runId: run.id,
+        jobId: run.jobId ?? null,
+        status: run.status,
+        rerunOfRunId: run.rerunOfRunId ?? runId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const code = message === 'Run not found' ? 'NOT_FOUND' : 'INVALID_STATE';
+      const statusCode = message === 'Run not found' ? 404 : 500;
+      sendApiError(res, statusCode, code, message);
+    }
+  });
 
   attachRunStreamRoute(app, '/api/v1/agents/runs/:run_id/stream');
   attachRunStreamRoute(app, '/api/v1/agents/runs/:runId/stream');
@@ -235,7 +366,7 @@ export function registerAgentRoutes(app: Express): void {
       sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-    res.json({ run_id: result.run.id, status: 'started' });
+    res.json({ runId: result.run.id, run_id: result.run.id, jobId: result.run.jobId ?? null, status: result.run.status });
   });
 
   app.post('/api/v1/agents/research', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
@@ -259,7 +390,7 @@ export function registerAgentRoutes(app: Express): void {
       sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-    res.json({ run_id: result.run.id, status: 'started' });
+    res.json({ runId: result.run.id, run_id: result.run.id, jobId: result.run.jobId ?? null, status: result.run.status });
   });
 
   app.post('/api/v1/agents/summarize', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
@@ -283,7 +414,7 @@ export function registerAgentRoutes(app: Express): void {
       sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-    res.json({ run_id: result.run.id, status: 'started' });
+    res.json({ runId: result.run.id, run_id: result.run.id, jobId: result.run.jobId ?? null, status: result.run.status });
   });
 
   app.post('/api/v1/agents/brainstorm', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
@@ -307,7 +438,7 @@ export function registerAgentRoutes(app: Express): void {
       sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-    res.json({ run_id: result.run.id, status: 'started' });
+    res.json({ runId: result.run.id, run_id: result.run.id, jobId: result.run.jobId ?? null, status: result.run.status });
   });
 
   app.post('/api/v1/agents/outline', authMiddleware, checkWorkspaceCapability('canRunAutomation'), async (req: AuthRequest, res: Response) => {
@@ -331,7 +462,7 @@ export function registerAgentRoutes(app: Express): void {
       sendApiError(res, error.status, error.code, error.message, error.details);
       return;
     }
-    res.json({ run_id: result.run.id, status: 'started' });
+    res.json({ runId: result.run.id, run_id: result.run.id, jobId: result.run.jobId ?? null, status: result.run.status });
   });
 
   app.get('/api/v1/agents/runs/:run_id/tree', authMiddleware, checkWorkspaceCapability('canViewWorkspace'), async (req: AuthRequest, res: Response) => {

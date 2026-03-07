@@ -5,6 +5,18 @@ import { observability } from './observability.js';
 import { graphRAGQuery } from './graphrag.js';
 import { searchService } from './search.js';
 import { getAgentTemplate } from './agent-templates.js';
+import {
+  appendJobEvent,
+  createJob,
+  failJob,
+  getJobBySourceRunId,
+  isCancelRequested,
+  markCancelled,
+  markTimeout,
+  startJob as startTrackedJob,
+  succeedJob,
+  type JobRecord,
+} from './jobService.js';
 
 const genAI = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
@@ -33,11 +45,20 @@ export interface AgentRun {
   workspaceId: string;
   userId: string;
   type: string;
+  threadId?: string | null;
   mode: 'auto' | 'hybrid' | 'graph';
   status: RunStatus;
+  title?: string;
+  input?: string;
   inputSummary: string;
+  output?: string | null;
   outputSummary?: string | null;
   errorSummary?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  rerunOfRunId?: string | null;
   result?: Record<string, unknown> | null;
   createdAt: string;
   startedAt?: string | null;
@@ -46,7 +67,77 @@ export interface AgentRun {
   rootRunId?: string | null;
   depth: number;
   tokenUsage?: number | null;
+  jobId?: string | null;
+  lastJobId?: string | null;
+  citations?: AgentCitation[];
+  relatedArtifacts?: AgentRunArtifact[];
   steps: AgentStep[];
+}
+
+export interface AgentCitation {
+  id: string;
+  title: string;
+  sourceType: string;
+  sourceId: string;
+  snippet: string;
+  href?: string | null;
+}
+
+export interface AgentRunArtifact {
+  artifactId: string;
+  type: string;
+  title: string;
+  mimeType?: string | null;
+  size?: number | null;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AgentRunListItem {
+  runId: string;
+  threadId?: string | null;
+  status: RunStatus;
+  title: string;
+  inputPreview: string;
+  outputPreview: string;
+  errorSummary?: string | null;
+  jobId?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  rerunOfRunId?: string | null;
+}
+
+export interface AgentRunDetail {
+  runId: string;
+  workspaceId: string;
+  threadId?: string | null;
+  type?: string;
+  mode?: 'auto' | 'hybrid' | 'graph';
+  title?: string;
+  status: RunStatus;
+  input: string;
+  inputSummary?: string;
+  output?: string | null;
+  outputSummary?: string | null;
+  errorCode?: string | null;
+  errorSummary?: string | null;
+  jobId?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  citations: AgentCitation[];
+  relatedArtifacts: AgentRunArtifact[];
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  rerunOfRunId?: string | null;
+  steps?: AgentStep[];
 }
 
 type AgentEvent =
@@ -65,20 +156,38 @@ interface AgentRunRow {
   user_id: string;
   type: string;
   query: string;
+  thread_id: string | null;
   mode: 'auto' | 'hybrid' | 'graph';
   status: string;
   input_summary: string | null;
   output_summary: string | null;
   error_summary: string | null;
+  prompt_version: string | null;
+  prompt_label: string | null;
+  template_id: string | null;
+  template_version: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
   token_usage: number | null;
   parent_run_id: string | null;
   root_run_id: string | null;
+  rerun_of_run_id: string | null;
   depth: number;
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
+}
+
+interface AgentArtifactRow {
+  id: string;
+  run_id: string;
+  workspace_id: string;
+  type: string;
+  title: string;
+  mime_type: string | null;
+  size: string | number | null;
+  metadata: Record<string, unknown> | null;
+  created_at: Date;
 }
 
 interface AgentStepRow {
@@ -105,7 +214,18 @@ interface CreateAgentRunParams {
   template?: AgentTemplate;
   parentRunId?: string | null;
   rootRunId?: string | null;
+  threadId?: string | null;
+  promptVersion?: string | null;
+  promptLabel?: string | null;
+  templateId?: string | null;
+  templateVersion?: string | null;
+  rerunOfRunId?: string | null;
   depth?: number;
+  jobOptions?: {
+    retryOfJobId?: string | null;
+    triggeredVia?: 'manual' | 'schedule' | 'system' | null;
+    correlationId?: string | null;
+  };
 }
 
 interface DispatchAgentRunParams {
@@ -117,7 +237,9 @@ interface DispatchAgentRunParams {
   template?: AgentTemplate;
   parentRunId?: string | null;
   rootRunId?: string | null;
+  threadId?: string | null;
   depth?: number;
+  jobId: string;
 }
 
 const MAX_RECURSION_DEPTH = 2;
@@ -189,6 +311,142 @@ function approxTokenUsage(content: unknown): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
+function buildRunTitle(type: string): string {
+  return type
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getRunOutput(result: Record<string, unknown> | null | undefined): string | null {
+  return result && typeof result.answer === 'string' ? result.answer : null;
+}
+
+export function buildRunPreview(value: string | null | undefined, fallback = 'No output available yet'): string {
+  const raw = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!raw) return fallback;
+  return truncateSummary(raw.replace(/[\r\n]+/g, ' '), 160);
+}
+
+export function buildPromptTrace(run: Pick<AgentRunRow, 'prompt_version' | 'prompt_label' | 'template_id' | 'template_version'>) {
+  return {
+    promptVersion: run.prompt_version ?? 'v1',
+    promptLabel: run.prompt_label ?? run.template_id ?? 'supervisor',
+    templateId: run.template_id ?? null,
+    templateVersion: run.template_version ?? 'v1',
+  };
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function buildCitationHref(sourceType: string, sourceId: string): string | null {
+  if (!sourceId) return null;
+  if (sourceType === 'document') return `/documents/${sourceId}`;
+  return null;
+}
+
+export function buildRunCitations(result: Record<string, unknown> | null | undefined): AgentCitation[] {
+  const retrieved = Array.isArray(result?.retrieved) ? result.retrieved : [];
+  const citations: AgentCitation[] = [];
+  const seen = new Set<string>();
+
+  for (const item of retrieved) {
+    const retrievedItem = toRecord(item);
+    const sources = Array.isArray(retrievedItem.sources) ? retrievedItem.sources : [];
+    for (const source of sources) {
+      const sourceRecord = toRecord(source);
+      const sourceType = typeof sourceRecord.type === 'string' ? sourceRecord.type : 'document';
+      const sourceId = typeof sourceRecord.document_id === 'string'
+        ? sourceRecord.document_id
+        : typeof sourceRecord.id === 'string'
+          ? sourceRecord.id
+          : `${sourceType}:${citations.length + 1}`;
+      const key = `${sourceType}:${sourceId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      citations.push({
+        id: key,
+        title: typeof sourceRecord.title === 'string' && sourceRecord.title.trim()
+          ? sourceRecord.title
+          : `Source ${citations.length + 1}`,
+        sourceType,
+        sourceId,
+        snippet: buildRunPreview(
+          typeof sourceRecord.content === 'string' ? sourceRecord.content : null,
+          'No source preview available'
+        ),
+        href: buildCitationHref(sourceType, sourceId),
+      });
+      if (citations.length >= 8) return citations;
+    }
+  }
+
+  return citations;
+}
+
+function normalizeArtifact(row: AgentArtifactRow): AgentRunArtifact {
+  return {
+    artifactId: row.id,
+    type: row.type,
+    title: row.title,
+    mimeType: row.mime_type,
+    size: row.size == null ? null : Number(row.size),
+    metadata: row.metadata ?? {},
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+export async function buildRunArtifactsSummary(runId: string, workspaceId: string): Promise<AgentRunArtifact[]> {
+  const p = pool;
+  if (!p) return [];
+  const result = await p.query<AgentArtifactRow>(
+    `SELECT *
+     FROM agent_artifacts
+     WHERE run_id = $1 AND workspace_id = $2
+     ORDER BY created_at DESC, id DESC`,
+    [runId, workspaceId]
+  );
+  return result.rows.map(normalizeArtifact);
+}
+
+async function persistRunArtifacts(runId: string, workspaceId: string, result: Record<string, unknown> | undefined): Promise<void> {
+  const p = pool;
+  if (!p) return;
+  const output = getRunOutput(result ?? null);
+  if (!output) return;
+
+  const existing = await p.query<{ count: string }>(
+    `SELECT COUNT(*) AS count
+     FROM agent_artifacts
+     WHERE run_id = $1 AND workspace_id = $2`,
+    [runId, workspaceId]
+  );
+  if (Number(existing.rows[0]?.count ?? 0) > 0) return;
+
+  await p.query(
+    `INSERT INTO agent_artifacts
+       (run_id, workspace_id, type, title, mime_type, size, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [
+      runId,
+      workspaceId,
+      'text_output',
+      'Final answer',
+      'text/plain',
+      output.length,
+      JSON.stringify({
+        preview: buildRunPreview(output),
+        storageKey: null,
+        url: null,
+        provider: null,
+      }),
+    ]
+  );
+}
+
 function normalizeStep(row: AgentStepRow): AgentStep {
   return {
     id: row.id,
@@ -207,16 +465,27 @@ function normalizeStep(row: AgentStepRow): AgentStep {
 }
 
 function normalizeRun(row: AgentRunRow, steps: AgentStep[] = []): AgentRun {
+  const promptTrace = buildPromptTrace(row);
+  const output = getRunOutput(row.result);
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     userId: row.user_id,
     type: row.type,
+    threadId: row.thread_id,
     mode: row.mode,
     status: normalizeRunStatus(row.status),
+    title: buildRunTitle(row.type),
+    input: row.query,
     inputSummary: row.input_summary ?? summarizeInput(row.query),
+    output,
     outputSummary: row.output_summary,
     errorSummary: row.error_summary ?? row.error,
+    promptVersion: promptTrace.promptVersion,
+    promptLabel: promptTrace.promptLabel,
+    templateId: promptTrace.templateId,
+    templateVersion: promptTrace.templateVersion,
+    rerunOfRunId: row.rerun_of_run_id,
     result: row.result,
     createdAt: row.created_at.toISOString(),
     startedAt: row.started_at ? row.started_at.toISOString() : null,
@@ -225,8 +494,45 @@ function normalizeRun(row: AgentRunRow, steps: AgentStep[] = []): AgentRun {
     rootRunId: row.root_run_id,
     depth: row.depth,
     tokenUsage: row.token_usage,
+    jobId: null,
+    lastJobId: null,
+    citations: buildRunCitations(row.result),
+    relatedArtifacts: [],
     steps,
   };
+}
+
+async function attachLatestJob(run: AgentRun): Promise<AgentRun> {
+  const job = await getJobBySourceRunId(run.id, run.workspaceId, 'agent_run');
+  if (!job) return run;
+  return {
+    ...run,
+    jobId: job.id,
+    lastJobId: job.id,
+  };
+}
+
+async function attachRunDecorations(run: AgentRun): Promise<AgentRun> {
+  const withJob = await attachLatestJob(run);
+  const relatedArtifacts = await buildRunArtifactsSummary(withJob.id, withJob.workspaceId);
+  return {
+    ...withJob,
+    relatedArtifacts,
+  };
+}
+
+async function appendAgentJobProgress(jobId: string, message: string, payload: Record<string, unknown> = {}) {
+  await appendJobEvent({
+    jobId,
+    eventType: 'progress',
+    message,
+    payload,
+  }).catch(() => undefined);
+}
+
+async function assertAgentJobNotCancelled(jobId: string, workspaceId: string): Promise<void> {
+  if (!(await isCancelRequested(jobId, workspaceId))) return;
+  throw new Error('JOB_CANCELLED');
 }
 
 async function getModel() {
@@ -275,7 +581,7 @@ async function loadRun(runId: string, scope?: { workspaceId?: string; userId?: s
   const row = await loadRunRow(runId, scope);
   if (!row) return null;
   const steps = await loadRunSteps(runId);
-  return normalizeRun(row, steps);
+  return attachRunDecorations(normalizeRun(row, steps));
 }
 
 async function emitRunSnapshot(runId: string): Promise<AgentRun | null> {
@@ -522,21 +828,35 @@ export async function createAgentRun(params: CreateAgentRunParams): Promise<Agen
   const mode = params.mode ?? 'auto';
   const depth = params.depth ?? 0;
   const rootRunId = params.rootRunId ?? (params.parentRunId ? null : runId);
+  const promptVersion = params.promptVersion ?? 'v1';
+  const promptLabel = params.promptLabel ?? template;
+  const templateId = params.templateId ?? template;
+  const templateVersion = params.templateVersion ?? 'v1';
 
   await p.query(
     `INSERT INTO agent_runs
-       (id, workspace_id, user_id, type, query, mode, status, input_summary, parent_run_id, root_run_id, depth, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $9, $10, NOW())`,
+       (
+         id, workspace_id, user_id, type, query, thread_id, mode, status, input_summary,
+         prompt_version, prompt_label, template_id, template_version,
+         parent_run_id, root_run_id, rerun_of_run_id, depth, created_at
+       )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())`,
     [
       runId,
       params.workspaceId,
       params.userId,
       template,
       params.input,
+      params.threadId ?? null,
       mode,
       summarizeInput(params.input),
+      promptVersion,
+      promptLabel,
+      templateId,
+      templateVersion,
       params.parentRunId ?? null,
       rootRunId,
+      params.rerunOfRunId ?? null,
       depth,
     ]
   );
@@ -606,6 +926,7 @@ export async function completeAgentRun(
       patch.tokenUsage ?? null,
     ]
   );
+  await persistRunArtifacts(runId, workspaceId, patch.result);
 
   const run = await getAgentRunById(runId, workspaceId, userId);
   if (!run) throw new Error('Run disappeared after completion');
@@ -650,19 +971,128 @@ export async function getRunById(runId: string): Promise<AgentRun | null> {
   return loadRun(runId);
 }
 
-export async function listAgentRuns(workspaceId: string, userId: string, limit = 10): Promise<AgentRun[]> {
+function toAgentRunListItem(run: AgentRun): AgentRunListItem {
+  return {
+    runId: run.id,
+    threadId: run.threadId ?? null,
+    status: run.status,
+    title: run.title ?? buildRunTitle(run.type),
+    inputPreview: buildRunPreview(run.inputSummary, 'No input preview available'),
+    outputPreview: buildRunPreview(run.outputSummary ?? run.output, 'No output available yet'),
+    errorSummary: run.errorSummary ?? null,
+    jobId: run.jobId ?? run.lastJobId ?? null,
+    promptVersion: run.promptVersion ?? null,
+    promptLabel: run.promptLabel ?? null,
+    templateId: run.templateId ?? null,
+    templateVersion: run.templateVersion ?? null,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt ?? null,
+    finishedAt: run.finishedAt ?? null,
+    rerunOfRunId: run.rerunOfRunId ?? null,
+  };
+}
+
+function toAgentRunDetail(run: AgentRun): AgentRunDetail {
+  return {
+    runId: run.id,
+    workspaceId: run.workspaceId,
+    threadId: run.threadId ?? null,
+    type: run.type,
+    mode: run.mode,
+    title: run.title ?? buildRunTitle(run.type),
+    status: run.status,
+    input: run.input ?? run.inputSummary,
+    inputSummary: run.inputSummary,
+    output: run.output ?? run.outputSummary ?? null,
+    outputSummary: run.outputSummary ?? null,
+    errorCode: run.status === 'failed' ? 'agent_run_failed' : null,
+    errorSummary: run.errorSummary ?? null,
+    jobId: run.jobId ?? run.lastJobId ?? null,
+    promptVersion: run.promptVersion ?? null,
+    promptLabel: run.promptLabel ?? null,
+    templateId: run.templateId ?? null,
+    templateVersion: run.templateVersion ?? null,
+    citations: run.citations ?? [],
+    relatedArtifacts: run.relatedArtifacts ?? [],
+    createdAt: run.createdAt,
+    startedAt: run.startedAt ?? null,
+    finishedAt: run.finishedAt ?? null,
+    rerunOfRunId: run.rerunOfRunId ?? null,
+    steps: run.steps,
+  };
+}
+
+export async function listAgentRuns(
+  workspaceId: string,
+  userId: string,
+  options: {
+    threadId?: string | null;
+    status?: RunStatus | null;
+    agentType?: string | null;
+    cursor?: string | null;
+    limit?: number;
+  } = {}
+): Promise<{ items: AgentRunListItem[]; nextCursor: string | null }> {
   const p = pool;
-  if (!p) return [];
+  if (!p) return { items: [], nextCursor: null };
+
+  const limit = Math.max(1, Math.min(50, options.limit ?? 10));
+  const params: unknown[] = [workspaceId, userId];
+  const conditions = ['workspace_id = $1', 'user_id = $2'];
+  let nextIndex = 3;
+
+  if (options.threadId) {
+    conditions.push(`thread_id = $${nextIndex++}`);
+    params.push(options.threadId);
+  }
+  if (options.status) {
+    conditions.push(`status = $${nextIndex++}`);
+    params.push(options.status);
+  }
+  if (options.agentType) {
+    conditions.push(`type = $${nextIndex++}`);
+    params.push(options.agentType);
+  }
+  if (options.cursor) {
+    const decoded = JSON.parse(Buffer.from(options.cursor, 'base64url').toString('utf8')) as {
+      createdAt?: string;
+      runId?: string;
+    };
+    if (decoded.createdAt && decoded.runId) {
+      conditions.push(`(created_at < $${nextIndex}::timestamptz OR (created_at = $${nextIndex}::timestamptz AND id < $${nextIndex + 1}::uuid))`);
+      params.push(decoded.createdAt, decoded.runId);
+      nextIndex += 2;
+    }
+  }
 
   const result = await p.query<AgentRunRow>(
     `SELECT * FROM agent_runs
-     WHERE workspace_id = $1 AND user_id = $2
-     ORDER BY created_at DESC
-     LIMIT $3`,
-    [workspaceId, userId, limit]
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${nextIndex}`,
+    [...params, limit + 1]
   );
 
-  return result.rows.map((row) => normalizeRun(row, []));
+  const rows = result.rows.slice(0, limit);
+  const items = await Promise.all(rows.map(async (row) => toAgentRunListItem(await attachLatestJob(normalizeRun(row, [])))));
+  const last = rows.at(-1);
+  const nextCursor = result.rows.length > limit && last
+    ? Buffer.from(JSON.stringify({ createdAt: last.created_at.toISOString(), runId: last.id }), 'utf8').toString('base64url')
+    : null;
+
+  return { items, nextCursor };
+}
+
+export async function getAgentRunDetail(runId: string, workspaceId: string, userId: string): Promise<AgentRunDetail | null> {
+  const run = await getAgentRunById(runId, workspaceId, userId);
+  if (!run) return null;
+  return toAgentRunDetail(run);
+}
+
+export async function getAgentRunArtifacts(runId: string, workspaceId: string, userId: string): Promise<AgentRunArtifact[]> {
+  const run = await getAgentRunById(runId, workspaceId, userId);
+  if (!run) return [];
+  return buildRunArtifactsSummary(run.id, run.workspaceId);
 }
 
 async function dispatchAgentRunExecution(params: DispatchAgentRunParams): Promise<void> {
@@ -671,16 +1101,21 @@ async function dispatchAgentRunExecution(params: DispatchAgentRunParams): Promis
   const depth = params.depth ?? 0;
 
   try {
+    await assertAgentJobNotCancelled(params.jobId, params.workspaceId);
     await startAgentRun(params.runId, params.workspaceId, params.userId);
+    await startTrackedJob(params.jobId, params.workspaceId);
+    await appendAgentJobProgress(params.jobId, 'Agent run started', { template, mode });
     await insertSteps(params.runId, depth, STEP_TEMPLATES.map((step) => ({
       stepKey: step.stepKey,
       name: step.name,
       worker: step.worker,
       position: step.position,
     })));
+    await appendAgentJobProgress(params.jobId, 'Planner step queued', { stepKey: 'planner' });
 
     const finalResult = await runSupervisorPipeline({
       runId: params.runId,
+      jobId: params.jobId,
       input: params.input,
       workspaceId: params.workspaceId,
       userId: params.userId,
@@ -690,11 +1125,25 @@ async function dispatchAgentRunExecution(params: DispatchAgentRunParams): Promis
       rootRunId: params.rootRunId ?? params.runId,
     });
 
+    await assertAgentJobNotCancelled(params.jobId, params.workspaceId);
     await completeAgentRun(params.runId, params.workspaceId, params.userId, {
       result: finalResult,
       tokenUsage: approxTokenUsage(finalResult.answer ?? ''),
     });
+    await succeedJob(params.jobId, params.workspaceId, {
+      runId: params.runId,
+      template,
+      mode,
+      outputSummary: summarizeOutput(finalResult.answer ?? ''),
+    });
   } catch (error) {
+    if (error instanceof Error && error.message === 'JOB_CANCELLED') {
+      await markCancelled(params.jobId, params.workspaceId, { runId: params.runId }).catch(() => undefined);
+      await failAgentRun(params.runId, params.workspaceId, params.userId, 'Run cancelled by user').catch(() => undefined);
+      emitEvent(params.runId, { type: 'error', message: 'Run cancelled by user' });
+      return;
+    }
+
     const safeError = summarizeError(error);
     observability.error('Agent runtime failed', { runId: params.runId, error: safeError });
 
@@ -707,6 +1156,18 @@ async function dispatchAgentRunExecution(params: DispatchAgentRunParams): Promis
       });
     }
 
+    const jobFailure = safeError === 'Provider timeout'
+      ? markTimeout(params.jobId, params.workspaceId, {
+          errorCode: 'timeout',
+          errorSummary: safeError,
+          metadata: { runId: params.runId, template, mode },
+        })
+      : failJob(params.jobId, params.workspaceId, {
+          errorCode: 'runtime_error',
+          errorSummary: safeError,
+          metadata: { runId: params.runId, template, mode },
+        });
+    await jobFailure.catch(() => undefined);
     emitEvent(params.runId, { type: 'error', message: safeError });
   } finally {
     emitEvent(params.runId, { type: 'done' });
@@ -715,6 +1176,29 @@ async function dispatchAgentRunExecution(params: DispatchAgentRunParams): Promis
 
 export async function createAndStartAgentRun(params: CreateAgentRunParams): Promise<AgentRun> {
   const run = await createAgentRun(params);
+  const job = await createJob({
+    workspaceId: params.workspaceId,
+    jobType: 'agent_run',
+    resourceType: 'agent_run',
+    resourceId: run.id,
+    sourceDomain: 'agent',
+    sourceRunId: run.id,
+    triggeredBy: params.userId,
+    triggeredVia: params.jobOptions?.triggeredVia ?? 'manual',
+    retryOfJobId: params.jobOptions?.retryOfJobId ?? null,
+    correlationId: params.jobOptions?.correlationId ?? null,
+    metadata: {
+      input: params.input,
+      threadId: params.threadId ?? null,
+      mode: params.mode ?? 'auto',
+      template: params.template ?? 'supervisor',
+      templateId: params.templateId ?? params.template ?? 'supervisor',
+      templateVersion: params.templateVersion ?? 'v1',
+      promptVersion: params.promptVersion ?? 'v1',
+      promptLabel: params.promptLabel ?? params.template ?? 'supervisor',
+      rerunOfRunId: params.rerunOfRunId ?? null,
+    },
+  });
   void dispatchAgentRunExecution({
     runId: run.id,
     workspaceId: params.workspaceId,
@@ -724,9 +1208,81 @@ export async function createAndStartAgentRun(params: CreateAgentRunParams): Prom
     template: params.template,
     parentRunId: params.parentRunId,
     rootRunId: params.rootRunId ?? run.rootRunId ?? run.id,
+    threadId: params.threadId ?? null,
     depth: params.depth,
+    jobId: job.id,
   });
-  return run;
+  return {
+    ...run,
+    jobId: job.id,
+    lastJobId: job.id,
+  };
+}
+
+export async function rerunAgentRun(runId: string, workspaceId: string, userId: string): Promise<AgentRun> {
+  const existing = await getAgentRunById(runId, workspaceId, userId);
+  if (!existing) {
+    throw new Error('Run not found');
+  }
+
+  const input = existing.input ?? existing.inputSummary;
+  return createAndStartAgentRun({
+    workspaceId,
+    userId,
+    input,
+    mode: existing.mode,
+    template: (existing.templateId ?? existing.type) as AgentTemplate,
+    threadId: existing.threadId ?? null,
+    templateId: existing.templateId ?? existing.type,
+    templateVersion: existing.templateVersion ?? 'v1',
+    promptVersion: existing.promptVersion ?? 'v1',
+    promptLabel: existing.promptLabel ?? existing.templateId ?? existing.type,
+    rerunOfRunId: existing.id,
+    jobOptions: {
+      triggeredVia: 'manual',
+      correlationId: existing.jobId ?? existing.id,
+    },
+  });
+}
+
+export async function retryAgentJob(
+  job: Pick<JobRecord, 'id' | 'workspaceId' | 'metadata'>,
+  userId: string
+): Promise<AgentRun> {
+  const input = typeof job.metadata?.input === 'string' ? job.metadata.input : '';
+  if (!input) {
+    throw new Error('Agent retry job is missing input metadata');
+  }
+
+  const rawMode = job.metadata?.mode;
+  const rawTemplate = job.metadata?.template;
+  const mode = rawMode === 'hybrid' || rawMode === 'graph' ? rawMode : 'auto';
+  const template = rawTemplate === 'research' || rawTemplate === 'summarize' || rawTemplate === 'brainstorm' || rawTemplate === 'outline' || rawTemplate === 'supervisor'
+    ? rawTemplate
+    : 'supervisor';
+  const threadId = typeof job.metadata?.threadId === 'string' ? job.metadata.threadId : null;
+  const templateId = typeof job.metadata?.templateId === 'string' ? job.metadata.templateId : template;
+  const templateVersion = typeof job.metadata?.templateVersion === 'string' ? job.metadata.templateVersion : 'v1';
+  const promptVersion = typeof job.metadata?.promptVersion === 'string' ? job.metadata.promptVersion : 'v1';
+  const promptLabel = typeof job.metadata?.promptLabel === 'string' ? job.metadata.promptLabel : template;
+
+  return createAndStartAgentRun({
+    workspaceId: job.workspaceId,
+    userId,
+    input,
+    mode,
+    template,
+    threadId,
+    templateId,
+    templateVersion,
+    promptVersion,
+    promptLabel,
+    jobOptions: {
+      retryOfJobId: job.id,
+      triggeredVia: 'manual',
+      correlationId: job.id,
+    },
+  });
 }
 
 async function insertWorkerStep(runId: string, stepKey: string, name: string, position: number, depth = 0): Promise<void> {
@@ -844,6 +1400,7 @@ async function retrieveOrSpawn(
 
 async function runSupervisorPipeline(params: {
   runId: string;
+  jobId: string;
   input: string;
   workspaceId: string;
   userId: string;
@@ -859,9 +1416,11 @@ async function runSupervisorPipeline(params: {
     template: params.template,
   });
 
+  await assertAgentJobNotCancelled(params.jobId, params.workspaceId);
   const planned = await runStep(params.runId, 'planner', { input: params.input, template: params.template }, async ({ input }) => {
     return plannerWorker(input, params.template);
   });
+  await appendAgentJobProgress(params.jobId, 'Planner completed', { taskCount: planned.tasks.length });
 
   await Promise.all(planned.tasks.map((task, index) =>
     insertWorkerStep(params.runId, `worker_${index + 1}`, `Worker ${index + 1}: ${task.slice(0, 40)}`, 10 + index, params.depth)
@@ -917,15 +1476,27 @@ async function runSupervisorPipeline(params: {
       total: planned.tasks.length,
     });
   }
+  await appendAgentJobProgress(params.jobId, 'Retriever workers completed', {
+    completedWorkers: retrieved.length,
+    failedWorkers,
+  });
 
+  await assertAgentJobNotCancelled(params.jobId, params.workspaceId);
   const analysis = await runStep(params.runId, 'analyst', { input: params.input, retrieved }, async ({ input, retrieved: nextRetrieved }) => {
     return analystWorker(nextRetrieved, input, params.template);
   });
+  await appendAgentJobProgress(params.jobId, 'Analysis completed', {
+    keyPoints: Array.isArray(analysis?.key_points) ? analysis.key_points.length : 0,
+  });
 
+  await assertAgentJobNotCancelled(params.jobId, params.workspaceId);
   const finalResult = await runStep(params.runId, 'writer', { input: params.input, analysis, template: params.template }, async ({ input, analysis: nextAnalysis }) => {
     return writerWorker(input, nextAnalysis, params.template, (token) => {
       emitEvent(params.runId, { type: 'token', token });
     });
+  });
+  await appendAgentJobProgress(params.jobId, 'Writer completed', {
+    citationCount: Array.isArray(finalResult?.citations) ? finalResult.citations.length : 0,
   });
 
   return {

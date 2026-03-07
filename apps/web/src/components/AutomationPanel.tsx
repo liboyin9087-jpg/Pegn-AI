@@ -16,7 +16,7 @@ import {
   ToggleLeft, ToggleRight, History, X, CheckCircle2,
   AlertCircle, Clock, Loader2,
 } from 'lucide-react';
-import { api } from '../api/client';
+import { api, triggerAutomationJob, type AutomationTriggerResponse } from '../api/client';
 import type { WorkspaceMembershipSummary } from '../api/client';
 import { useOptionalAppContext } from '../contexts/AppContext';
 import EmptyState from './EmptyState';
@@ -114,8 +114,8 @@ async function deleteAutomation(id: string): Promise<void> {
   await api(`/automations/${id}`, { method: 'DELETE' });
 }
 
-async function triggerAutomation(id: string): Promise<void> {
-  await api(`/automations/${id}/trigger`, { method: 'POST', body: JSON.stringify({}) });
+async function triggerAutomation(id: string): Promise<AutomationTriggerResponse> {
+  return triggerAutomationJob(id);
 }
 
 async function getRunHistory(id: string): Promise<AutomationRun[]> {
@@ -423,12 +423,14 @@ function CreateForm({ workspaceId, onCreated, onCancel }: CreateFormProps) {
 
 // ── Automation Card ────────────────────────────────────────────────────────
 
-function AutomationCard({ automation, onToggle, onDelete, onTrigger, canRunAutomation }: {
+function AutomationCard({ automation, onToggle, onDelete, onTrigger, canRunAutomation, lastTriggeredJobId, onOpenJob }: {
   automation: Automation;
   onToggle: (id: string, enabled: boolean) => void;
   onDelete: (id: string) => void;
   onTrigger: (id: string) => void;
   canRunAutomation: boolean;
+  lastTriggeredJobId?: string | null;
+  onOpenJob?: (jobId: string) => void;
 }) {
   const [showHistory, setShowHistory] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -536,6 +538,18 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger, canRunAutom
               }
             </button>
 
+            {lastTriggeredJobId && onOpenJob ? (
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenJob(lastTriggeredJobId);
+                }}
+                className="rounded-lg border border-border px-2 py-1 text-[11px] text-text-secondary transition-colors hover:bg-surface-secondary"
+              >
+                Trace
+              </button>
+            ) : null}
+
             {/* Delete */}
             <button
               onClick={() => onDelete(automation.id)}
@@ -557,9 +571,10 @@ function AutomationCard({ automation, onToggle, onDelete, onTrigger, canRunAutom
 interface Props {
   workspaceId: string;
   workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
+  onOpenJob?: (jobId: string) => void;
 }
 
-export default function AutomationPanel({ workspaceId, workspaceMembershipSummary }: Props) {
+export default function AutomationPanel({ workspaceId, workspaceMembershipSummary, onOpenJob }: Props) {
   const appContext = useOptionalAppContext();
   const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
   const permissions = membership?.permissionSummary ?? {
@@ -574,6 +589,7 @@ export default function AutomationPanel({ workspaceId, workspaceMembershipSummar
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [triggerFeedback, setTriggerFeedback] = useState<string | null>(null);
+  const [lastTriggeredJobId, setLastTriggeredJobId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -615,7 +631,8 @@ export default function AutomationPanel({ workspaceId, workspaceMembershipSummar
   const handleTrigger = async (id: string) => {
     if (!permissions.canRunAutomation) return;
     try {
-      await triggerAutomation(id);
+      const response = await triggerAutomation(id);
+      setLastTriggeredJobId(response.jobId);
       setTriggerFeedback(id);
       setTimeout(() => setTriggerFeedback(null), 2000);
     } catch (e: any) {
@@ -732,6 +749,8 @@ export default function AutomationPanel({ workspaceId, workspaceMembershipSummar
                 onDelete={handleDelete}
                 onTrigger={handleTrigger}
                 canRunAutomation={permissions.canRunAutomation}
+                lastTriggeredJobId={lastTriggeredJobId}
+                onOpenJob={onOpenJob}
               />
             ))}
           </div>
@@ -746,12 +765,14 @@ export default function AutomationPanel({ workspaceId, workspaceMembershipSummar
               {disabled.map(a => (
                 <AutomationCard
                   key={a.id}
-                  automation={a}
-                  onToggle={handleToggle}
-                  onDelete={handleDelete}
-                  onTrigger={handleTrigger}
-                  canRunAutomation={permissions.canRunAutomation}
-                />
+                    automation={a}
+                    onToggle={handleToggle}
+                    onDelete={handleDelete}
+                    onTrigger={handleTrigger}
+                    canRunAutomation={permissions.canRunAutomation}
+                    lastTriggeredJobId={lastTriggeredJobId}
+                    onOpenJob={onOpenJob}
+                  />
               ))}
             </div>
           </div>

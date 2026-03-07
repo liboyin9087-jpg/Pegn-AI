@@ -6,6 +6,8 @@ export interface Document {
   id: string;
   workspace_id: string;
   title: string;
+  type?: string | null;
+  source?: string | null;
   content: Record<string, any>;
   yjs_state?: Buffer;
   index_status: DocumentIndexStatus;
@@ -25,6 +27,8 @@ export interface Document {
 export interface CreateDocumentRequest {
   workspace_id: string;
   title: string;
+  type?: string | null;
+  source?: string | null;
   content?: Record<string, any>;
   yjs_state?: Buffer;
   index_status?: DocumentIndexStatus;
@@ -43,12 +47,14 @@ export class DocumentModel {
     if (!p) throw new Error('Database not available');
 
     const result = await p.query(
-      `INSERT INTO documents (workspace_id, title, content, yjs_state, index_status, last_indexed_at, index_error, created_by, metadata, collection_id, properties)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO documents (workspace_id, title, type, source, content, yjs_state, index_status, last_indexed_at, index_error, created_by, metadata, collection_id, properties)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         data.workspace_id,
         data.title,
+        data.type ?? null,
+        data.source ?? null,
         data.content || {},
         data.yjs_state,
         data.index_status ?? 'pending',
@@ -102,6 +108,14 @@ export class DocumentModel {
     if (data.content !== undefined) {
       fields.push(`content = $${paramIndex++}`);
       values.push(data.content);
+    }
+    if (data.type !== undefined) {
+      fields.push(`type = $${paramIndex++}`);
+      values.push(data.type);
+    }
+    if (data.source !== undefined) {
+      fields.push(`source = $${paramIndex++}`);
+      values.push(data.source);
     }
     if (data.yjs_state !== undefined) {
       fields.push(`yjs_state = $${paramIndex++}`);

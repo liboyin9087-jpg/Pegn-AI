@@ -42,10 +42,13 @@ import { registerCommentRoutes, registerInboxRoutes } from './routes/comments.js
 import { registerOfflineObservabilityRoutes } from './routes/offline_observability.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerAutomationRoutes } from './routes/automations.js';
+import { registerJobsRoutes } from './routes/jobs.js';
+import { registerAdminRoutes } from './routes/admin.js';
 import { setupWebSocketServer } from './routes/websocket.js';
 import { recoverRunningRunsOnBoot } from './services/agent.js';
 import { startAutomationServices } from './services/automation.js';
 import { authMiddleware } from './middleware/auth.js';
+import { recoverRunningJobsOnBoot } from './services/jobService.js';
 
 const app = express();
 app.use(cors({
@@ -90,6 +93,8 @@ registerInboxRoutes(app);
 registerOfflineObservabilityRoutes(app);
 registerBillingRoutes(app);
 registerAutomationRoutes(app);
+registerJobsRoutes(app);
+registerAdminRoutes(app);
 
 // ── 全域錯誤處理（必須在所有 route 之後，防止 stack trace 洩漏） ──
 app.use((err: any, req: any, res: any, _next: any) => {
@@ -148,6 +153,10 @@ httpServer.listen(apiPort, () => {
 
 // Initialize database
 await initDb();
+const recoveredJobs = await recoverRunningJobsOnBoot();
+if (recoveredJobs > 0) {
+  observability.warn('Recovered running jobs as failed', { recoveredJobs });
+}
 const recoveredRuns = await recoverRunningRunsOnBoot();
 if (recoveredRuns > 0) {
   observability.warn('Recovered running agent runs as failed', { recoveredRuns });

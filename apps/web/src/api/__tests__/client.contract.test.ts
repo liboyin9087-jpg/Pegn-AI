@@ -13,14 +13,16 @@ describe('API workspace_id contract', () => {
 
   it('sends workspace_id for search', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ results: [] }), { status: 200 })
+      new Response(JSON.stringify({ items: [], total: 0, query: 'test', normalizedQuery: 'test', filtersApplied: { type: null, source: null, updatedFrom: null, updatedTo: null, limit: 10 }, facets: { byType: [], bySource: [] }, nextCursor: null, durationMs: 1 }), { status: 200 })
     );
 
-    await search('test', 'ws-1');
+    await search({ q: 'test', workspaceId: 'ws-1' });
 
     const [, init] = fetchMock.mock.calls[0];
-    const body = JSON.parse(String((init as RequestInit).body));
-    expect(body.workspace_id).toBe('ws-1');
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('/search?');
+    expect(url).toContain('workspace_id=ws-1');
+    expect(url).toContain('q=test');
   });
 
   it('normalizes createCollection to workspace_id', async () => {
@@ -47,4 +49,3 @@ describe('API workspace_id contract', () => {
     expect(body.workspace_id).toBe('ws-3');
   });
 });
-

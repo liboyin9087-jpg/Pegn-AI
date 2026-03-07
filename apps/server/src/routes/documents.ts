@@ -11,6 +11,7 @@ import {
 } from '../services/idempotency.js';
 import { observability } from '../services/observability.js';
 import { searchService } from '../services/search.js';
+import { recordAuditLog } from '../services/admin.js';
 
 function sendApiError(res: Response, status: number, code: string, message: string, details: unknown = null) {
   res.status(status).json({
@@ -276,6 +277,19 @@ export function registerDocumentRoutes(app: Express): void {
         entityId: req.params.id,
         payload: { title: existing.title },
         triggeredBy: req.userId,
+      });
+
+      await recordAuditLog({
+        workspaceId: existing.workspace_id,
+        actorId: req.userId ?? null,
+        actorDisplay: req.userEmail ?? req.userId ?? 'Unknown user',
+        eventType: 'document_deleted',
+        targetType: 'document',
+        targetId: req.params.id,
+        summary: `Deleted document ${existing.title}`,
+        metadata: {
+          title: existing.title,
+        },
       });
 
       res.json({ message: 'Document deleted', documentId: req.params.id });

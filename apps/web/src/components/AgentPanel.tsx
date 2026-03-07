@@ -3,12 +3,17 @@ import {
   api,
   createAgentRun,
   getAgentRun,
+  rerunAgentRun,
+  listAgentRuns,
   streamAgentRun,
   type AgentRun,
+  type AgentRunDetail,
+  type AgentRunListItem,
   type AgentRunStep,
   type WorkspaceMembershipSummary,
 } from '../api/client';
-import AgentRunHistory from './AgentRunHistory';
+import AgentRunDetailPanel from './AgentRunDetailPanel';
+import AgentRunHistoryList from './AgentRunHistoryList';
 import { useOptionalAppContext } from '../contexts/AppContext';
 import ForbiddenState from './ForbiddenState';
 
@@ -17,13 +22,6 @@ const STATUS_COPY: Record<AgentRun['status'], string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
-};
-
-const STATUS_COLOR: Record<AgentRun['status'], string> = {
-  queued: 'text-text-tertiary',
-  running: 'text-warning',
-  completed: 'text-success',
-  failed: 'text-error',
 };
 
 type AgentMode = 'research' | 'summarize' | 'brainstorm' | 'outline';
@@ -75,14 +73,46 @@ function mergeStep(steps: AgentRunStep[], nextStep: AgentRunStep): AgentRunStep[
   return next.sort((a, b) => a.position - b.position);
 }
 
+function toRunDetail(run: AgentRun): AgentRunDetail {
+  return {
+    runId: run.id,
+    workspaceId: run.workspaceId,
+    threadId: run.threadId ?? null,
+    type: run.type,
+    mode: run.mode,
+    title: run.title ?? run.type,
+    status: run.status,
+    input: run.input ?? run.inputSummary,
+    inputSummary: run.inputSummary,
+    output: run.output ?? (typeof run.result?.answer === 'string' ? run.result.answer : null),
+    outputSummary: run.outputSummary ?? null,
+    errorCode: run.status === 'failed' ? 'agent_run_failed' : null,
+    errorSummary: run.errorSummary ?? null,
+    jobId: run.jobId ?? run.lastJobId ?? null,
+    promptVersion: run.promptVersion ?? null,
+    promptLabel: run.promptLabel ?? null,
+    templateId: run.templateId ?? null,
+    templateVersion: run.templateVersion ?? null,
+    citations: run.citations ?? [],
+    relatedArtifacts: run.relatedArtifacts ?? [],
+    createdAt: run.createdAt,
+    startedAt: run.startedAt ?? null,
+    finishedAt: run.finishedAt ?? null,
+    rerunOfRunId: run.rerunOfRunId ?? null,
+    steps: run.steps,
+  };
+}
+
 export default function AgentPanel({
   workspaceId,
   activeDoc,
   workspaceMembershipSummary,
+  onOpenJob,
 }: {
   workspaceId: string;
   activeDoc: any;
   workspaceMembershipSummary?: WorkspaceMembershipSummary | null;
+  onOpenJob?: (jobId: string) => void;
 }) {
   const appContext = useOptionalAppContext();
   const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
@@ -94,9 +124,12 @@ export default function AgentPanel({
     canDeleteDocuments: false,
     canRunAutomation: false,
   };
+
   const [mode, setMode] = useState<AgentMode>('research');
   const [input, setInput] = useState('');
-  const [run, setRun] = useState<AgentRun | null>(null);
+  const [run, setRun] = useState<AgentRunDetail | null>(null);
+  const [runSteps, setRunSteps] = useState<AgentRunStep[]>([]);
+  const [runs, setRuns] = useState<AgentRunListItem[]>([]);
   const [createPending, setCreatePending] = useState(false);
   const [streamPending, setStreamPending] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -105,7 +138,6 @@ export default function AgentPanel({
   const abortRef = useRef<(() => void) | null>(null);
   const streamingAnswerRef = useRef('');
 
-  const activeStatus = run?.status;
   const isBusy = createPending || streamPending;
   const storageKey = useMemo(() => getStorageKey(workspaceId), [workspaceId]);
 
@@ -123,12 +155,23 @@ export default function AgentPanel({
     setStreamPending(false);
   }, []);
 
+  const refreshRunList = useCallback(async () => {
+    if (!workspaceId || !permissions.canViewWorkspace) return;
+    try {
+      const response = await listAgentRuns(workspaceId, { limit: 8 });
+      setRuns(response.items);
+    } catch {
+      // Keep the existing list if refresh fails.
+    }
+  }, [permissions.canViewWorkspace, workspaceId]);
+
   const restoreRun = useCallback(async (runId: string, shouldAttach = true) => {
     if (!workspaceId || !runId) return;
 
     try {
       const nextRun = await getAgentRun(runId, workspaceId);
       setRun(nextRun);
+      setRunSteps(nextRun.steps ?? []);
       localStorage.setItem(storageKey, runId);
 
       if ((nextRun.status === 'queued' || nextRun.status === 'running') && shouldAttach) {
@@ -141,7 +184,8 @@ export default function AgentPanel({
           (data) => {
             if (data.type === 'step') {
               const nextStep = data.step as AgentRunStep;
-              setRun((prev) => (prev ? { ...prev, steps: mergeStep(prev.steps, nextStep) } : prev));
+              setRunSteps((prev) => mergeStep(prev, nextStep));
+              setRun((prev) => (prev ? { ...prev, steps: mergeStep(prev.steps ?? [], nextStep) } : prev));
               return;
             }
 
@@ -151,32 +195,30 @@ export default function AgentPanel({
             }
 
             if (data.type === 'run') {
-              const nextSnapshot = data.run as AgentRun;
+              const nextSnapshot = toRunDetail(data.run as AgentRun);
               setRun(nextSnapshot);
-              if (!streamingAnswerRef.current && typeof nextSnapshot.result?.answer === 'string') {
-                updateStreamingAnswer(() => nextSnapshot.result?.answer ?? '');
+              setRunSteps(nextSnapshot.steps ?? []);
+              if (!streamingAnswerRef.current && nextSnapshot.output) {
+                updateStreamingAnswer(() => nextSnapshot.output ?? '');
               }
               if (nextSnapshot.status === 'failed' && nextSnapshot.errorSummary) {
                 setRuntimeError(nextSnapshot.errorSummary);
               }
-              return;
-            }
-
-            if (data.type === 'error') {
-              setRuntimeError(String(data.message ?? 'Agent run failed'));
             }
           },
           async () => {
             setStreamPending(false);
             abortRef.current = null;
+            await refreshRunList();
             try {
               const latest = await getAgentRun(runId, workspaceId);
               setRun(latest);
+              setRunSteps(latest.steps ?? []);
               if (latest.status === 'failed' && latest.errorSummary) {
                 setRuntimeError(latest.errorSummary);
               }
             } catch {
-              // Keep the latest streamed snapshot if final reconcile fails.
+              // Keep latest streamed snapshot.
             }
           },
           async () => {
@@ -185,6 +227,7 @@ export default function AgentPanel({
             try {
               const latest = await getAgentRun(runId, workspaceId);
               setRun(latest);
+              setRunSteps(latest.steps ?? []);
               setRuntimeError(latest.errorSummary ?? 'Failed to attach run stream');
             } catch {
               setRuntimeError('Failed to attach run stream');
@@ -197,7 +240,11 @@ export default function AgentPanel({
     } catch {
       setRuntimeError('Failed to load run state');
     }
-  }, [storageKey, stopStreaming, updateStreamingAnswer, workspaceId]);
+  }, [refreshRunList, storageKey, stopStreaming, updateStreamingAnswer, workspaceId]);
+
+  useEffect(() => {
+    void refreshRunList();
+  }, [refreshRunList]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -225,32 +272,34 @@ export default function AgentPanel({
         template: config.template,
       });
 
-      setRun(nextRun);
-      localStorage.setItem(storageKey, nextRun.id);
-
-      if (nextRun.status === 'failed' && nextRun.errorSummary) {
-        setRuntimeError(nextRun.errorSummary);
-      } else {
-        await restoreRun(nextRun.id, true);
-      }
+      await refreshRunList();
+      const nextRunId = nextRun.runId ?? nextRun.id;
+      await restoreRun(nextRunId, true);
     } catch {
       setRuntimeError('Failed to create agent run');
     } finally {
       setCreatePending(false);
     }
-  }, [createPending, input, mode, permissions.canRunAutomation, restoreRun, stopStreaming, storageKey, updateStreamingAnswer, workspaceId]);
+  }, [createPending, input, mode, permissions.canRunAutomation, refreshRunList, restoreRun, stopStreaming, updateStreamingAnswer, workspaceId]);
 
-  const handleRetry = useCallback(async () => {
-    if (!permissions.canRunAutomation || run?.status !== 'failed') return;
-    await handleStart();
-  }, [handleStart, permissions.canRunAutomation, run?.status]);
+  const handleRerun = useCallback(async () => {
+    if (!permissions.canRunAutomation || !run) return;
+    setRuntimeError(null);
+    try {
+      const rerun = await rerunAgentRun(run.runId, workspaceId);
+      await refreshRunList();
+      await restoreRun(rerun.runId, true);
+    } catch {
+      setRuntimeError('Failed to rerun agent workflow');
+    }
+  }, [permissions.canRunAutomation, refreshRunList, restoreRun, run, workspaceId]);
 
   const handleSaveToDoc = useCallback(async () => {
     if (!permissions.canEditDocuments) {
       setRuntimeError('You have view access only and cannot save agent output to a document.');
       return;
     }
-    const answer = run?.result?.answer || streamingAnswerRef.current;
+    const answer = run?.output || streamingAnswerRef.current;
     if (!answer || !workspaceId) return;
 
     const config = MODE_CONFIG[mode];
@@ -268,7 +317,7 @@ export default function AgentPanel({
     } catch {
       setRuntimeError('Failed to save result to document');
     }
-  }, [input, mode, permissions.canEditDocuments, run?.result?.answer, workspaceId]);
+  }, [input, mode, permissions.canEditDocuments, run?.output, workspaceId]);
 
   const handleUseDoc = useCallback(() => {
     if (activeDoc?.title) {
@@ -282,9 +331,8 @@ export default function AgentPanel({
     void restoreRun(runId, true);
   }, [restoreRun, updateStreamingAnswer]);
 
-  const resultAnswer = typeof run?.result?.answer === 'string' ? run.result.answer : undefined;
-  const finalAnswer = resultAnswer || (streamingAnswer.length > 0 ? streamingAnswer : undefined);
-  const canRetry = permissions.canRunAutomation && run?.status === 'failed' && !createPending;
+  const finalAnswer = run?.output || (streamingAnswer.length > 0 ? streamingAnswer : undefined);
+  const canRerun = permissions.canRunAutomation && !!run;
 
   return (
     <div className="flex h-full flex-col gap-3 bg-surface p-3">
@@ -309,7 +357,7 @@ export default function AgentPanel({
       {!permissions.canRunAutomation ? (
         <ForbiddenState
           title="Read-only agent access"
-          description="You can review existing runs, but only editors and admins can start or retry agent and automation runs."
+          description="You can review existing runs, but only editors and admins can start or rerun agent and automation work."
         />
       ) : null}
 
@@ -359,73 +407,80 @@ export default function AgentPanel({
         </div>
       </div>
 
-      <AgentRunHistory
-        workspaceId={workspaceId}
-        activeRunId={run?.id ?? null}
+      <AgentRunHistoryList
+        items={runs}
+        activeRunId={run?.runId ?? null}
         onSelectRun={handleSelectRun}
       />
 
-      {run && (
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+      {run ? (
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           <div className="rounded-xl border border-border bg-panel p-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-mono text-text-tertiary">#{run.id.slice(0, 8)}</p>
-                <p className={`mt-1 text-sm font-medium ${STATUS_COLOR[run.status]}`}>
-                  {STATUS_COPY[run.status]}
-                </p>
-                <p className="mt-1 text-xs text-text-tertiary">{run.inputSummary}</p>
+                <p className="text-xs font-mono text-text-tertiary">#{run.runId.slice(0, 8)}</p>
+                <p className="mt-1 text-sm font-medium text-text-primary">{STATUS_COPY[run.status]}</p>
+                <p className="mt-1 text-xs text-text-tertiary">{run.inputSummary ?? run.input}</p>
               </div>
               <div className="text-right text-xs text-text-tertiary">
                 <p>{new Date(run.createdAt).toLocaleString()}</p>
-                {run.finishedAt && <p className="mt-1">Finished: {new Date(run.finishedAt).toLocaleTimeString()}</p>}
+                {run.finishedAt ? <p className="mt-1">Finished: {new Date(run.finishedAt).toLocaleTimeString()}</p> : null}
               </div>
             </div>
 
-            {runtimeError && (
+            {runtimeError ? (
               <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-xs text-error">
                 {runtimeError}
               </div>
-            )}
+            ) : null}
 
-            {run.status === 'queued' && (
-              <p className="mt-3 text-xs text-text-secondary">Run created. Preparing execution.</p>
-            )}
-
-            {run.status === 'running' && (
-              <p className="mt-3 text-xs text-text-secondary">Execution is in progress. Stream events are attached to this run.</p>
-            )}
-
-            {canRetry && (
-              <div className="mt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {run.jobId && onOpenJob ? (
                 <button
-                  onClick={() => void handleRetry()}
+                  onClick={() => onOpenJob(run.jobId!)}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-tertiary"
+                >
+                  View job trace
+                </button>
+              ) : null}
+              {canRerun ? (
+                <button
+                  onClick={() => void handleRerun()}
                   className="rounded-lg border border-accent px-3 py-1.5 text-xs text-accent transition-colors hover:bg-accent-light"
                 >
-                  Retry as new run
+                  Rerun
                 </button>
-              </div>
-            )}
+              ) : null}
+            </div>
           </div>
 
-          {run.steps.map((step) => (
-            <div key={step.id || step.stepKey} className="rounded-xl border border-border bg-panel p-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-text-secondary">{step.name}</span>
-                <span className="text-[11px] text-text-tertiary">{step.status}</span>
-              </div>
-              {step.output != null && (
-                <p className="mt-1.5 line-clamp-2 text-xs text-text-tertiary">
-                  {typeof step.output === 'string' ? step.output : JSON.stringify(step.output).slice(0, 160)}
-                </p>
-              )}
-              {step.error && (
-                <p className="mt-1.5 text-xs text-error">{step.error}</p>
-              )}
-            </div>
-          ))}
+          <AgentRunDetailPanel
+            run={{ ...run, output: finalAnswer ?? run.output ?? null, steps: runSteps }}
+            canRerun={canRerun}
+            onRerun={() => void handleRerun()}
+            onOpenJob={onOpenJob}
+          />
 
-          {finalAnswer && (
+          {runSteps.length > 0 ? (
+            <div className="space-y-2">
+              {runSteps.map((step) => (
+                <div key={step.id || step.stepKey} className="rounded-xl border border-border bg-panel p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-text-secondary">{step.name}</span>
+                    <span className="text-[11px] text-text-tertiary">{step.status}</span>
+                  </div>
+                  {step.output != null ? (
+                    <p className="mt-1.5 line-clamp-2 text-xs text-text-tertiary">
+                      {typeof step.output === 'string' ? step.output : JSON.stringify(step.output).slice(0, 160)}
+                    </p>
+                  ) : null}
+                  {step.error ? <p className="mt-1.5 text-xs text-error">{step.error}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {finalAnswer ? (
             <div className="rounded-xl border border-accent-muted bg-accent-light p-3">
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-xs font-medium text-accent">Final Output</p>
@@ -439,19 +494,17 @@ export default function AgentPanel({
               </div>
               <p className="whitespace-pre-wrap text-xs leading-relaxed text-text-secondary">{finalAnswer}</p>
             </div>
-          )}
+          ) : null}
         </div>
-      )}
-
-      {!run && !isBusy && (
+      ) : !isBusy ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="text-center text-text-tertiary">
             <div className="mb-2 text-3xl">AI</div>
-            <p className="text-xs">Create a run first, then stream and restore it by run ID.</p>
+            <p className="text-xs">Create a run first, then inspect the canonical run detail.</p>
             <p className="mt-1 text-xs text-text-secondary">Runs remain queryable after reload.</p>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

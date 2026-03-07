@@ -23,6 +23,19 @@ import crypto from 'node:crypto';
 import { pool } from '../db/client.js';
 import { observability } from './observability.js';
 import { startSupervisorRun } from './agent.js';
+import {
+  appendJobEvent,
+  createJob,
+  failJob,
+  isCancelRequested,
+  markCancelled,
+  markTimeout,
+  startJob,
+  succeedJob,
+  type JobRecord,
+  type JobStatus,
+  type JobTriggeredVia,
+} from './jobService.js';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -70,6 +83,11 @@ export interface ConditionRule {
 export interface ActionConfig {
   type: ActionType;
   config: Record<string, unknown>;
+}
+
+export interface AutomationDispatchResult {
+  jobId: string;
+  status: JobStatus;
 }
 
 // ── EventBus ───────────────────────────────────────────────────────────────
@@ -242,6 +260,54 @@ async function executeUpdateProperty(config: Record<string, unknown>, context: R
   return { item_id: itemId, property_key: propertyKey, updated: true };
 }
 
+function normalizeTriggeredVia(triggeredBy: 'event' | 'schedule' | 'manual'): JobTriggeredVia {
+  if (triggeredBy === 'manual') return 'manual';
+  if (triggeredBy === 'schedule') return 'schedule';
+  return 'system';
+}
+
+async function createAutomationJob(
+  automation: AutomationRow,
+  event: AutomationEvent,
+  triggeredBy: 'event' | 'schedule' | 'manual',
+  retryOfJobId?: string | null
+) {
+  return createJob({
+    workspaceId: automation.workspace_id,
+    jobType: 'automation_trigger',
+    resourceType: 'automation',
+    resourceId: automation.id,
+    sourceDomain: 'automation',
+    triggeredBy: event.triggeredBy ?? automation.created_by,
+    triggeredVia: normalizeTriggeredVia(triggeredBy),
+    retryOfJobId: retryOfJobId ?? null,
+    correlationId: automation.id,
+    metadata: {
+      automationId: automation.id,
+      automationName: automation.name,
+      triggerType: automation.trigger_type,
+      eventType: event.type,
+      entityType: event.entityType ?? null,
+      entityId: event.entityId ?? null,
+      payload: event.payload ?? {},
+    },
+  });
+}
+
+async function assertAutomationJobNotCancelled(jobId: string, workspaceId: string): Promise<void> {
+  if (!(await isCancelRequested(jobId, workspaceId))) return;
+  throw new Error('JOB_CANCELLED');
+}
+
+async function appendAutomationJobProgress(jobId: string, message: string, payload: Record<string, unknown> = {}) {
+  await appendJobEvent({
+    jobId,
+    eventType: 'progress',
+    message,
+    payload,
+  }).catch(() => undefined);
+}
+
 // ── Run recorder ───────────────────────────────────────────────────────────
 
 async function recordRun(
@@ -284,10 +350,11 @@ async function recordRun(
 
 // ── Core execution ─────────────────────────────────────────────────────────
 
-export async function executeAutomation(
+async function executeAutomation(
   automation: AutomationRow,
   event: AutomationEvent,
-  triggeredBy: 'event' | 'schedule' | 'manual' = 'event'
+  triggeredBy: 'event' | 'schedule' | 'manual' = 'event',
+  job: JobRecord
 ): Promise<void> {
   const startedAt = new Date();
   const context: Record<string, unknown> = {
@@ -300,6 +367,12 @@ export async function executeAutomation(
 
   // Evaluate conditions
   if (!evaluateConditions(automation.conditions, context)) {
+    await startJob(job.id, automation.workspace_id).catch(() => undefined);
+    await appendAutomationJobProgress(job.id, 'Automation conditions evaluated to skipped', { automationId: automation.id });
+    await succeedJob(job.id, automation.workspace_id, {
+      ...job.metadata,
+      skipped: true,
+    }).catch(() => undefined);
     await recordRun(automation.id, automation.workspace_id, triggeredBy, context, 'skipped', [], undefined, startedAt);
     return;
   }
@@ -307,27 +380,140 @@ export async function executeAutomation(
   const actionsResult: Record<string, unknown>[] = [];
   let runError: string | undefined;
 
-  for (const action of automation.actions) {
-    try {
-      let result: Record<string, unknown>;
-      switch (action.type) {
-        case 'run_agent':        result = await executeRunAgent(action.config, context); break;
-        case 'send_webhook':     result = await executeSendWebhook(action.config, context); break;
-        case 'notify':           result = await executeNotify(action.config, context); break;
-        case 'update_property':  result = await executeUpdateProperty(action.config, context); break;
-        default:                 result = { skipped: true, reason: 'unknown_action' };
+  try {
+    await startJob(job.id, automation.workspace_id);
+    await appendAutomationJobProgress(job.id, 'Automation execution started', {
+      automationId: automation.id,
+      actionCount: automation.actions.length,
+    });
+
+    for (const action of automation.actions) {
+      await assertAutomationJobNotCancelled(job.id, automation.workspace_id);
+      try {
+        let result: Record<string, unknown>;
+        switch (action.type) {
+          case 'run_agent':        result = await executeRunAgent(action.config, context); break;
+          case 'send_webhook':     result = await executeSendWebhook(action.config, context); break;
+          case 'notify':           result = await executeNotify(action.config, context); break;
+          case 'update_property':  result = await executeUpdateProperty(action.config, context); break;
+          default:                 result = { skipped: true, reason: 'unknown_action' };
+        }
+        actionsResult.push({ type: action.type, result, ok: true });
+        await appendAutomationJobProgress(job.id, `Action ${action.type} completed`, {
+          actionType: action.type,
+          ok: true,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        actionsResult.push({ type: action.type, error: errMsg, ok: false });
+        runError = errMsg;
+        await appendAutomationJobProgress(job.id, `Action ${action.type} failed`, {
+          actionType: action.type,
+          ok: false,
+          error: errMsg,
+        });
+        observability.error('[automation] action failed', { automationId: automation.id, action: action.type, err: errMsg });
       }
-      actionsResult.push({ type: action.type, result, ok: true });
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      actionsResult.push({ type: action.type, error: errMsg, ok: false });
-      runError = errMsg;
-      observability.error('[automation] action failed', { automationId: automation.id, action: action.type, err: errMsg });
     }
+
+    const status = runError ? 'error' : 'done';
+    await recordRun(automation.id, automation.workspace_id, triggeredBy, context, status, actionsResult, runError, startedAt);
+    if (runError) {
+      await failJob(job.id, automation.workspace_id, {
+        errorCode: 'automation_error',
+        errorSummary: runError.slice(0, 240),
+        metadata: {
+          ...job.metadata,
+          actionCount: automation.actions.length,
+        },
+      }).catch(() => undefined);
+      return;
+    }
+
+    await succeedJob(job.id, automation.workspace_id, {
+      ...job.metadata,
+      actionCount: automation.actions.length,
+    }).catch(() => undefined);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'JOB_CANCELLED') {
+      await markCancelled(job.id, automation.workspace_id, { automationId: automation.id }).catch(() => undefined);
+      await recordRun(automation.id, automation.workspace_id, triggeredBy, context, 'error', actionsResult, 'Automation cancelled by user', startedAt);
+      return;
+    }
+
+    const safeError = error instanceof Error ? error.message : String(error);
+    await recordRun(automation.id, automation.workspace_id, triggeredBy, context, 'error', actionsResult, safeError, startedAt);
+    const failure = safeError.toLowerCase().includes('timeout')
+      ? markTimeout(job.id, automation.workspace_id, {
+          errorCode: 'timeout',
+          errorSummary: safeError.slice(0, 240),
+          metadata: job.metadata,
+        })
+      : failJob(job.id, automation.workspace_id, {
+          errorCode: 'automation_error',
+          errorSummary: safeError.slice(0, 240),
+          metadata: job.metadata,
+        });
+    await failure.catch(() => undefined);
+  }
+}
+
+export async function dispatchAutomationExecution(
+  automation: AutomationRow,
+  event: AutomationEvent,
+  triggeredBy: 'event' | 'schedule' | 'manual' = 'event',
+  options: { retryOfJobId?: string | null } = {}
+): Promise<AutomationDispatchResult> {
+  const job = await createAutomationJob(automation, event, triggeredBy, options.retryOfJobId);
+
+  void Promise.resolve()
+    .then(() => executeAutomation(automation, event, triggeredBy, job))
+    .catch((error) => observability.error('[automation] executeAutomation failed', { automationId: automation.id, err: String(error) }));
+
+  return {
+    jobId: job.id,
+    status: job.status,
+  };
+}
+
+export async function retryAutomationJob(
+  job: Pick<JobRecord, 'id' | 'workspaceId' | 'metadata'>,
+  userId: string
+): Promise<AutomationDispatchResult> {
+  const automationId = typeof job.metadata?.automationId === 'string' ? job.metadata.automationId : null;
+  if (!automationId) {
+    throw new Error('Automation retry job is missing automationId metadata');
   }
 
-  const status = runError ? 'error' : 'done';
-  await recordRun(automation.id, automation.workspace_id, triggeredBy, context, status, actionsResult, runError, startedAt);
+  const p = pool;
+  if (!p) {
+    throw new Error('Database unavailable');
+  }
+
+  const result = await p.query<AutomationRow>(
+    'SELECT * FROM automations WHERE id = $1 AND workspace_id = $2 LIMIT 1',
+    [automationId, job.workspaceId]
+  );
+  const automation = result.rows[0];
+  if (!automation) {
+    throw new Error('Automation not found');
+  }
+
+  return dispatchAutomationExecution(
+    automation,
+    {
+      type: automation.trigger_type,
+      workspaceId: automation.workspace_id,
+      entityType: typeof job.metadata?.entityType === 'string' ? job.metadata.entityType as AutomationEvent['entityType'] : undefined,
+      entityId: typeof job.metadata?.entityId === 'string' ? job.metadata.entityId : undefined,
+      payload: job.metadata?.payload && typeof job.metadata.payload === 'object'
+        ? job.metadata.payload as Record<string, unknown>
+        : {},
+      triggeredBy: userId,
+    },
+    'manual',
+    { retryOfJobId: job.id }
+  );
 }
 
 // ── AutomationEngine — listens to event bus ───────────────────────────────
@@ -369,7 +555,7 @@ class AutomationEngine {
 
       for (const auto of rows) {
         // Async fire-and-forget (each automation is independent)
-        executeAutomation(auto, event, 'event').catch(err =>
+        dispatchAutomationExecution(auto, event, 'event').catch(err =>
           observability.error('[automation] executeAutomation failed', { automationId: auto.id, err: String(err) })
         );
       }
@@ -435,7 +621,7 @@ class SchedulerService {
           : new Date(0); // never run → run immediately
 
         if (now >= nextRun) {
-          executeAutomation(auto, { type: 'schedule', workspaceId: auto.workspace_id }, 'schedule')
+          dispatchAutomationExecution(auto, { type: 'schedule', workspaceId: auto.workspace_id }, 'schedule')
             .catch(err => observability.error('[scheduler] executeAutomation failed', { id: auto.id, err: String(err) }));
         }
       } catch (err) {

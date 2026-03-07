@@ -1,6 +1,7 @@
 import { pool } from '../db/client.js';
 import { listWorkspaceAdmins } from '../lib/workspaceRoles.js';
 import { observability } from './observability.js';
+import { recordAuditLog } from './admin.js';
 
 export type ResourceType = 'ai_tokens' | 'ai_calls' | 'agent_runs';
 
@@ -70,6 +71,23 @@ export async function notifyQuotaAlert(
        ON CONFLICT DO NOTHING`,
       [workspaceId, flagKey, used]
     );
+
+    await recordAuditLog({
+      workspaceId,
+      actorId: null,
+      actorDisplay: 'System',
+      eventType: 'quota_alert_raised',
+      targetType: 'quota',
+      targetId: type,
+      summary: `Quota alert raised for ${type} at ${thresholdPct}%`,
+      metadata: {
+        resourceType: type,
+        thresholdPct,
+        used,
+        limit,
+        period,
+      },
+    });
 
     observability.warn('Quota threshold alert sent', {
       workspaceId,

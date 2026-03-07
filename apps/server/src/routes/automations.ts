@@ -16,7 +16,8 @@ import { pool } from '../db/client.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { checkWorkspaceCapability } from '../middleware/rbac.js';
 import { observability } from '../services/observability.js';
-import { executeAutomation, type AutomationRow } from '../services/automation.js';
+import { dispatchAutomationExecution, type AutomationRow } from '../services/automation.js';
+import { recordAuditLog } from '../services/admin.js';
 
 export function registerAutomationRoutes(app: Express): void {
 
@@ -181,15 +182,34 @@ export function registerAutomationRoutes(app: Express): void {
       const automation = rows[0];
       const payload = req.body.payload ?? {};
 
-      // Fire async
-      executeAutomation(
+      const dispatch = await dispatchAutomationExecution(
         automation,
         { type: automation.trigger_type, workspaceId: automation.workspace_id, payload, triggeredBy: (req as any).userId },
         'manual'
-      ).catch(err => observability.error('[automations] manual trigger failed', { id: automation.id, err: String(err) }));
+      );
 
-      observability.info('[automations] manual trigger dispatched', { id: automation.id });
-      res.json({ triggered: true, automation_id: automation.id, message: 'Automation triggered, running in background' });
+      await recordAuditLog({
+        workspaceId: automation.workspace_id,
+        actorId: (req as any).userId ?? null,
+        actorDisplay: (req as any).userEmail ?? (req as any).userId ?? 'Unknown user',
+        eventType: 'automation_triggered',
+        targetType: 'automation',
+        targetId: automation.id,
+        summary: `Triggered automation ${automation.name}`,
+        metadata: {
+          automationName: automation.name,
+          jobId: dispatch.jobId,
+        },
+      });
+
+      observability.info('[automations] manual trigger dispatched', { id: automation.id, jobId: dispatch.jobId });
+      res.json({
+        triggered: true,
+        automation_id: automation.id,
+        jobId: dispatch.jobId,
+        status: dispatch.status,
+        message: 'Automation triggered, running in background',
+      });
     } catch (err) {
       observability.error('[automations] manual trigger error', { err: String(err) });
       res.status(500).json({ error: 'Failed to trigger automation' });
