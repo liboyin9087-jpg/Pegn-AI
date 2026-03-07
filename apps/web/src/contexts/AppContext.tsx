@@ -47,16 +47,16 @@ export interface AppContextValue {
   openSurfaceTarget: (target: SurfaceLinkTarget) => void;
   requestRefresh: (domains: RefreshDomain[]) => void;
   refreshVersions: Record<RefreshDomain, number>;
-  surfaceContexts: {
+  surfaceContexts?: {
     search: SearchViewPayload | null;
     operations: OperationsViewPayload | null;
     agent: AgentViewPayload | null;
     inbox: InboxViewPayload | null;
     admin: AdminViewPayload | null;
   };
-  setSurfaceContext: (surface: SavedViewSurface, payload: SavedViewPayload) => void;
-  captureCurrentSurfaceContext: (surface: SavedViewSurface) => SavedViewPayload | null;
-  applySavedView: (view: SavedViewDetail) => void;
+  setSurfaceContext?: (surface: SavedViewSurface, payload: SavedViewPayload) => void;
+  captureCurrentSurfaceContext?: (surface: SavedViewSurface) => SavedViewPayload | null;
+  applySavedView?: (view: SavedViewDetail) => void;
 }
 
 export type RefreshDomain = 'search' | 'agentRuns' | 'jobs' | 'admin' | 'audit' | 'inbox';
@@ -68,6 +68,8 @@ const DEFAULT_WORKSPACE_PERMISSIONS: WorkspacePermissionSummary = {
   canEditDocuments: false,
   canDeleteDocuments: false,
   canRunAutomation: false,
+  canCollaborate: false,
+  canManageAssignments: false,
 };
 
 const AppContext = createContext<AppContextValue | null>(null);

@@ -45,6 +45,8 @@ const DEFAULT_WORKSPACE_PERMISSIONS: WorkspacePermissionSummary = {
   canEditDocuments: false,
   canDeleteDocuments: false,
   canRunAutomation: false,
+  canCollaborate: false,
+  canManageAssignments: false,
 };
 
 const DEFAULT_REFRESH_VERSIONS: Record<RefreshDomain, number> = {

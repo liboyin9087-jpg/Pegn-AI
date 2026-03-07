@@ -35,7 +35,8 @@ export async function initDefaultRoles(): Promise<void> {
         'workspace:admin',
         'collection:create', 'collection:edit', 'collection:delete', 'collection:view',
         'document:create', 'document:edit', 'document:delete', 'document:view',
-        'comment:view', 'comment:create', 'comment:resolve'
+        'comment:view', 'comment:create', 'comment:resolve',
+        'thread:view', 'thread:create', 'thread:comment', 'thread:resolve', 'thread:assign'
       ])
     },
     {
@@ -44,13 +45,14 @@ export async function initDefaultRoles(): Promise<void> {
       permissions: JSON.stringify([
         'collection:create', 'collection:edit', 'collection:view',
         'document:create', 'document:edit', 'document:view',
-        'comment:view', 'comment:create', 'comment:resolve'
+        'comment:view', 'comment:create', 'comment:resolve',
+        'thread:view', 'thread:create', 'thread:comment', 'thread:resolve', 'thread:assign'
       ])
     },
     {
       name: 'viewer',
       description: 'Read-only access',
-      permissions: JSON.stringify(['collection:view', 'document:view', 'comment:view', 'comment:create'])
+      permissions: JSON.stringify(['collection:view', 'document:view', 'comment:view'])
     }
   ];
 
@@ -317,9 +319,57 @@ export async function runColumnMigrations(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_surface_created_at ON saved_views(workspace_id, surface, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_saved_views_owner_workspace_surface_created_at ON saved_views(owner_user_id, workspace_id, surface, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_scope_surface_pinned_created_at ON saved_views(workspace_id, scope, surface, is_pinned, created_at DESC)`,
+    // P3-B: target-based collaboration threads
+    `CREATE TABLE IF NOT EXISTS collaboration_threads (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       target_type TEXT NOT NULL,
+       target_id TEXT NOT NULL,
+       status TEXT NOT NULL DEFAULT 'open',
+       title TEXT,
+       created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       last_activity_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       resolved_at TIMESTAMP WITH TIME ZONE,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       UNIQUE(workspace_id, target_type, target_id)
+     )`,
+    `CREATE TABLE IF NOT EXISTS thread_comments (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       thread_id UUID NOT NULL REFERENCES collaboration_threads(id) ON DELETE CASCADE,
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       author_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       body TEXT NOT NULL,
+       mentioned_user_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE TABLE IF NOT EXISTS thread_assignments (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       thread_id UUID NOT NULL REFERENCES collaboration_threads(id) ON DELETE CASCADE,
+       workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+       assigned_to_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       assigned_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       status TEXT NOT NULL DEFAULT 'open',
+       due_at TIMESTAMP WITH TIME ZONE,
+       is_current BOOLEAN NOT NULL DEFAULT true,
+       created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+       resolved_at TIMESTAMP WITH TIME ZONE
+     )`,
+    `ALTER TABLE collaboration_threads DROP CONSTRAINT IF EXISTS collaboration_threads_target_type_check`,
+    `ALTER TABLE collaboration_threads ADD CONSTRAINT collaboration_threads_target_type_check CHECK (target_type IN ('document', 'agentRun', 'job', 'adminAlert'))`,
+    `ALTER TABLE collaboration_threads DROP CONSTRAINT IF EXISTS collaboration_threads_status_check`,
+    `ALTER TABLE collaboration_threads ADD CONSTRAINT collaboration_threads_status_check CHECK (status IN ('open', 'in_progress', 'resolved'))`,
+    `ALTER TABLE thread_assignments DROP CONSTRAINT IF EXISTS thread_assignments_status_check`,
+    `ALTER TABLE thread_assignments ADD CONSTRAINT thread_assignments_status_check CHECK (status IN ('open', 'in_progress', 'resolved'))`,
+    `CREATE INDEX IF NOT EXISTS idx_collaboration_threads_workspace_target ON collaboration_threads(workspace_id, target_type, target_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_collaboration_threads_workspace_status_updated ON collaboration_threads(workspace_id, status, updated_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_thread_comments_thread_created ON thread_comments(thread_id, created_at ASC)`,
+    `CREATE INDEX IF NOT EXISTS idx_thread_assignments_thread_current_created ON thread_assignments(thread_id, is_current, created_at DESC)`,
     // P0: inbox notification type contract for existing databases
     `ALTER TABLE inbox_notifications DROP CONSTRAINT IF EXISTS inbox_notifications_type_check`,
-    `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'quota_alert', 'automation'))`,
+    `ALTER TABLE inbox_notifications ADD CONSTRAINT inbox_notifications_type_check CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation'))`,
   ];
   for (const sql of alterations) {
     try {
@@ -340,9 +390,9 @@ export async function checkSchema(): Promise<boolean> {
   try {
     const result = await pool.query(`
       SELECT COUNT(*) as count FROM information_schema.tables
-      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs', 'product_telemetry_events', 'saved_views')
+      WHERE table_name IN ('workspaces', 'documents', 'blocks', 'document_snapshots', 'search_index', 'collections', 'collection_views', 'roles', 'quota_limits', 'usage_records', 'jobs', 'job_events', 'audit_logs', 'product_telemetry_events', 'saved_views', 'collaboration_threads', 'thread_comments', 'thread_assignments')
     `);
-    return parseInt(result.rows[0].count) >= 15;
+    return parseInt(result.rows[0].count) >= 18;
   } catch (error) {
     console.error('[migrations] Failed to check schema:', error);
     return false;

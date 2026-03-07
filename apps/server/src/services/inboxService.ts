@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { pool } from '../db/client.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { createAdminTarget, createAgentTarget, createDocumentTarget, createOperationsTarget, createSearchTarget, type SurfaceLinkTarget } from './surfaceTargets.js';
@@ -35,6 +36,50 @@ export interface InboxNotificationProjection {
   relatedDocumentId?: string | null;
 }
 
+type Queryable = Pick<PoolClient, 'query'>;
+
+export interface CreateInboxNotificationParams {
+  workspaceId: string;
+  userId: string;
+  type: 'mention' | 'assignment' | 'quota_alert' | 'automation';
+  payload: Record<string, unknown>;
+  status?: 'unread' | 'read';
+  db?: Queryable | null;
+}
+
+export interface ProjectThreadMentionNotificationParams {
+  workspaceId: string;
+  userId: string;
+  threadId: string;
+  targetType: 'document' | 'agentRun' | 'job' | 'adminAlert';
+  targetId: string;
+  mentionedByUserId: string;
+  preview: string;
+  jobId?: string | null;
+  runId?: string | null;
+  documentId?: string | null;
+  db?: Queryable | null;
+}
+
+export interface ProjectThreadAssignmentNotificationParams {
+  workspaceId: string;
+  userId: string;
+  threadId: string;
+  targetType: 'document' | 'agentRun' | 'job' | 'adminAlert';
+  targetId: string;
+  assignedByUserId: string;
+  summary: string;
+  dueAt?: string | null;
+  jobId?: string | null;
+  runId?: string | null;
+  documentId?: string | null;
+  db?: Queryable | null;
+}
+
+function getQueryable(db?: Queryable | null): Queryable | null {
+  return db ?? pool;
+}
+
 export function buildNotificationSummary(notification: Pick<InboxNotificationRow, 'type' | 'payload'>): string {
   const payload = notification.payload ?? {};
   switch (notification.type) {
@@ -46,6 +91,12 @@ export function buildNotificationSummary(notification: Pick<InboxNotificationRow
       return typeof payload.message === 'string' && payload.message.trim()
         ? payload.message
         : 'Workspace quota threshold has been reached.';
+    case 'assignment':
+      return typeof payload.summary === 'string' && payload.summary.trim()
+        ? payload.summary
+        : typeof payload.message === 'string' && payload.message.trim()
+          ? payload.message
+          : 'A collaboration thread was assigned to you.';
     case 'automation':
       return typeof payload.message === 'string' && payload.message.trim()
         ? payload.message
@@ -77,9 +128,69 @@ export function buildNotificationTarget(notification: Pick<InboxNotificationRow,
       : null;
   const relatedDocumentId = typeof payload.document_id === 'string'
     ? payload.document_id
-    : typeof context.document_id === 'string'
-      ? context.document_id
+      : typeof context.document_id === 'string'
+        ? context.document_id
+        : null;
+
+  const targetType = typeof payload.target_type === 'string'
+    ? payload.target_type
+    : typeof context.target_type === 'string'
+      ? context.target_type
       : null;
+  const targetId = typeof payload.target_id === 'string'
+    ? payload.target_id
+    : typeof context.target_id === 'string'
+      ? context.target_id
+      : null;
+  const threadId = typeof payload.thread_id === 'string'
+    ? payload.thread_id
+    : typeof context.thread_id === 'string'
+      ? context.thread_id
+      : null;
+
+  if ((notification.type === 'mention' || notification.type === 'assignment') && targetType && targetId) {
+    switch (targetType) {
+      case 'document':
+        return {
+          sourceTarget: createDocumentTarget({
+            documentId: targetId,
+            threadId,
+          }),
+          relatedJobId,
+          relatedRunId,
+          relatedDocumentId: relatedDocumentId ?? targetId,
+        };
+      case 'agentRun':
+        return {
+          sourceTarget: createAgentTarget({
+            runId: relatedRunId ?? targetId,
+            jobId: relatedJobId,
+          }),
+          relatedJobId,
+          relatedRunId: relatedRunId ?? targetId,
+          relatedDocumentId,
+        };
+      case 'job':
+        return {
+          sourceTarget: createOperationsTarget({
+            jobId: relatedJobId ?? targetId,
+            jobType: typeof payload.job_type === 'string' ? payload.job_type as any : 'all',
+          }),
+          relatedJobId: relatedJobId ?? targetId,
+          relatedRunId,
+          relatedDocumentId,
+        };
+      case 'adminAlert':
+        return {
+          sourceTarget: createAdminTarget('alerts'),
+          relatedJobId,
+          relatedRunId,
+          relatedDocumentId,
+        };
+      default:
+        break;
+    }
+  }
 
   switch (notification.type) {
     case 'mention':
@@ -96,6 +207,16 @@ export function buildNotificationTarget(notification: Pick<InboxNotificationRow,
     case 'quota_alert':
       return {
         sourceTarget: createAdminTarget('usage'),
+        relatedJobId,
+        relatedRunId,
+        relatedDocumentId,
+      };
+    case 'assignment':
+      return {
+        sourceTarget: createSearchTarget({
+          query: typeof payload.query === 'string' ? payload.query : undefined,
+          documentId: relatedDocumentId,
+        }),
         relatedJobId,
         relatedRunId,
         relatedDocumentId,
@@ -155,6 +276,76 @@ export function buildNotificationTarget(notification: Pick<InboxNotificationRow,
         relatedDocumentId,
       };
   }
+}
+
+export async function createInboxNotification(params: CreateInboxNotificationParams): Promise<{ id: string } | null> {
+  const db = getQueryable(params.db);
+  if (!db) return null;
+
+  const result = await db.query<{ id: string }>(
+    `INSERT INTO inbox_notifications (workspace_id, user_id, type, payload, status)
+     VALUES ($1, $2, $3, $4::jsonb, $5)
+     RETURNING id`,
+    [
+      params.workspaceId,
+      params.userId,
+      params.type,
+      JSON.stringify(params.payload),
+      params.status ?? 'unread',
+    ]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function projectThreadMentionNotification(params: ProjectThreadMentionNotificationParams): Promise<string | null> {
+  const payload: Record<string, unknown> = {
+    thread_id: params.threadId,
+    target_type: params.targetType,
+    target_id: params.targetId,
+    mentioned_by: params.mentionedByUserId,
+    preview: params.preview,
+  };
+
+  if (params.jobId) payload.job_id = params.jobId;
+  if (params.runId) payload.run_id = params.runId;
+  if (params.documentId) payload.document_id = params.documentId;
+
+  const notification = await createInboxNotification({
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    type: 'mention',
+    payload,
+    db: params.db,
+  });
+
+  return notification?.id ?? null;
+}
+
+export async function projectThreadAssignmentNotification(params: ProjectThreadAssignmentNotificationParams): Promise<string | null> {
+  const payload: Record<string, unknown> = {
+    thread_id: params.threadId,
+    target_type: params.targetType,
+    target_id: params.targetId,
+    assigned_by_user_id: params.assignedByUserId,
+    summary: params.summary,
+    message: params.summary,
+  };
+
+  if (params.dueAt) payload.due_at = params.dueAt;
+  if (params.jobId) payload.job_id = params.jobId;
+  if (params.runId) payload.run_id = params.runId;
+  if (params.documentId) payload.document_id = params.documentId;
+
+  const notification = await createInboxNotification({
+    workspaceId: params.workspaceId,
+    userId: params.userId,
+    type: 'assignment',
+    payload,
+    db: params.db,
+  });
+
+  return notification?.id ?? null;
 }
 
 function normalizeInboxRow(row: InboxNotificationRow): InboxNotificationProjection {

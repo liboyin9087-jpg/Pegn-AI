@@ -1,7 +1,10 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bell, CheckCheck } from 'lucide-react';
 import type { InboxNotification } from '../api/client';
+import { useOptionalAppContext } from '../contexts/AppContext';
+import SavedViewPicker from './SavedViewPicker';
+import SaveCurrentViewDialog from './SaveCurrentViewDialog';
 
 interface Props {
   open: boolean;
@@ -60,6 +63,37 @@ export default function InboxPanel({
   onMarkRead,
   onMarkAllRead,
 }: Props) {
+  const appContext = useOptionalAppContext();
+  const workspaceId = appContext?.workspace?.id;
+  const savedContext = appContext?.surfaceContexts?.inbox;
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!savedContext) return;
+    setUnreadOnly(Boolean(savedContext.unreadOnly));
+    setTypeFilter(savedContext.type ?? '');
+  }, [savedContext]);
+
+  useEffect(() => {
+    appContext?.setSurfaceContext?.('inbox', {
+      filter: unreadOnly ? 'unread' : 'all',
+      unreadOnly,
+      type: typeFilter || null,
+      selectedNotificationId: savedContext?.selectedNotificationId ?? null,
+    });
+  }, [appContext, savedContext?.selectedNotificationId, typeFilter, unreadOnly]);
+
+  const filteredNotifications = useMemo(() => (
+    notifications.filter((notification) => {
+      if (unreadOnly && notification.status !== 'unread') return false;
+      if (typeFilter && notification.type !== typeFilter) return false;
+      return true;
+    })
+  ), [notifications, typeFilter, unreadOnly]);
+
   return (
     <AnimatePresence>
       {open ? (
@@ -85,6 +119,60 @@ export default function InboxPanel({
                 <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">{unreadCount}</span>
               </div>
               <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+                  <input type="checkbox" checked={unreadOnly} onChange={(event) => setUnreadOnly(event.target.checked)} />
+                  Unread only
+                </label>
+                <select
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value)}
+                  className="rounded-md border border-border bg-surface px-2 py-1 text-[11px] text-text-secondary"
+                >
+                  <option value="">All types</option>
+                  <option value="mention">Mention</option>
+                  <option value="quota_alert">Quota alert</option>
+                  <option value="automation">Automation</option>
+                  <option value="unknown">Unknown</option>
+                </select>
+                {workspaceId ? (
+                  <div className="relative flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSaveDialogOpen(false);
+                        setPickerOpen((current) => !current);
+                      }}
+                      className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text-secondary hover:bg-surface-secondary"
+                    >
+                      Views
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        setSaveDialogOpen((current) => !current);
+                      }}
+                      className="rounded-md border border-border px-2.5 py-1 text-[11px] text-text-secondary hover:bg-surface-secondary"
+                    >
+                      Save
+                    </button>
+                    <SavedViewPicker
+                      open={pickerOpen}
+                      workspaceId={workspaceId}
+                      surface="inbox"
+                      onClose={() => setPickerOpen(false)}
+                      onApplyView={(view) => appContext?.applySavedView?.(view)}
+                    />
+                    <SaveCurrentViewDialog
+                      open={saveDialogOpen}
+                      workspaceId={workspaceId}
+                      surface="inbox"
+                      payload={appContext?.captureCurrentSurfaceContext?.('inbox') ?? null}
+                      onClose={() => setSaveDialogOpen(false)}
+                      onSaved={() => undefined}
+                    />
+                  </div>
+                ) : null}
                 <button
                   onClick={onMarkAllRead}
                   className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-text-secondary transition-colors hover:bg-surface-secondary"
@@ -102,16 +190,24 @@ export default function InboxPanel({
             <div className="max-h-[70vh] overflow-y-auto">
               {loading ? (
                 <div className="p-6 text-sm text-text-tertiary">Loading notifications...</div>
-              ) : notifications.length === 0 ? (
+              ) : filteredNotifications.length === 0 ? (
                 <div className="p-8 text-center text-sm text-text-tertiary">No notifications yet.</div>
               ) : (
                 <div className="divide-y divide-border">
-                  {notifications.map((notification) => {
+                  {filteredNotifications.map((notification) => {
                     const meta = getNotificationMeta(notification);
                     return (
                       <div
                         key={notification.id}
-                        onClick={() => onOpenNotification(notification)}
+                        onClick={() => {
+                          appContext?.setSurfaceContext?.('inbox', {
+                            filter: unreadOnly ? 'unread' : 'all',
+                            unreadOnly,
+                            type: typeFilter || null,
+                            selectedNotificationId: notification.id,
+                          });
+                          onOpenNotification(notification);
+                        }}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
@@ -124,7 +220,7 @@ export default function InboxPanel({
                       >
                         <div className="flex items-start gap-3">
                           <div
-                            className="mt-1 h-2 w-2 flex-shrink-0 rounded-full"
+                          className="mt-1 h-2 w-2 flex-shrink-0 rounded-full"
                             style={{ background: notification.status === 'unread' ? 'var(--color-accent)' : 'transparent' }}
                           />
                           <div className="min-w-0 flex-1">

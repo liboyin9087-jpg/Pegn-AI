@@ -40,7 +40,7 @@ export default function SearchPanel({
   const permissions = useWorkspacePermissions();
   const appContext = useOptionalAppContext();
   const refreshVersion = useRefreshVersion('search');
-  const savedContext = appContext?.surfaceContexts.search;
+  const savedContext = appContext?.surfaceContexts?.search;
   const [draftQuery, setDraftQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -54,6 +54,8 @@ export default function SearchPanel({
   const [searchNonce, setSearchNonce] = useState(0);
   const [indexStatus, setIndexStatus] = useState<SearchIndexStatusResponse | null>(null);
   const [reindexingDocId, setReindexingDocId] = useState<string | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedTraceJobId, setSelectedTraceJobId] = useState<string | null>(null);
 
   const refreshIndexStatus = useCallback(async () => {
     if (!workspaceId) return;
@@ -133,12 +135,14 @@ export default function SearchPanel({
   useEffect(() => {
     if (!navigationTarget || navigationTarget.surface !== 'search') return;
     const nextQuery = navigationTarget.payload.query ?? navigationTarget.context?.query ?? '';
+    const nextDocumentId = navigationTarget.payload.documentId ?? null;
     if (nextQuery) {
       setDraftQuery(nextQuery);
       setSubmittedQuery(nextQuery);
       setCursor(null);
       setSearchNonce((current) => current + 1);
     }
+    setSelectedDocumentId(nextDocumentId);
   }, [navigationTarget]);
 
   useEffect(() => {
@@ -149,19 +153,35 @@ export default function SearchPanel({
     setSourceFilter(savedContext.source ?? '');
     setTimePreset(savedContext.updatedRange ?? 'all');
     setCursor(null);
+    setSelectedDocumentId(savedContext.selectedDocumentId ?? null);
+    setSelectedTraceJobId(savedContext.selectedTraceJobId ?? null);
   }, [savedContext]);
 
   useEffect(() => {
-    appContext?.setSurfaceContext('search', {
+    appContext?.setSurfaceContext?.('search', {
       query: submittedQuery,
       type: typeFilter || null,
       source: sourceFilter || null,
       updatedRange: timePreset,
       staleOnly: false,
-      selectedDocumentId: null,
-      selectedTraceJobId: null,
+      selectedDocumentId,
+      selectedTraceJobId,
     });
-  }, [appContext, sourceFilter, submittedQuery, timePreset, typeFilter]);
+  }, [appContext, selectedDocumentId, selectedTraceJobId, sourceFilter, submittedQuery, timePreset, typeFilter]);
+
+  useEffect(() => {
+    if (!selectedDocumentId || !results.some((item) => item.documentId === selectedDocumentId)) return;
+    onNavigateDoc?.(selectedDocumentId);
+    setSelectedDocumentId(null);
+  }, [onNavigateDoc, results, selectedDocumentId]);
+
+  useEffect(() => {
+    if (!selectedTraceJobId || !onOpenSurfaceTarget) return;
+    const matchingResult = results.find((item) => item.traceTarget && 'jobId' in item.traceTarget.payload && item.traceTarget.payload.jobId === selectedTraceJobId);
+    if (!matchingResult?.traceTarget) return;
+    onOpenSurfaceTarget(matchingResult.traceTarget);
+    setSelectedTraceJobId(null);
+  }, [onOpenSurfaceTarget, results, selectedTraceJobId]);
 
   const submitSearch = useCallback(() => {
     const next = draftQuery.trim();
@@ -313,11 +333,19 @@ export default function SearchPanel({
               <SearchResultCard
                 key={`${result.documentId}-${result.blockId ?? 'document'}`}
                 result={result}
-                onOpenDoc={onNavigateDoc}
+                onOpenDoc={(documentId) => {
+                  setSelectedDocumentId(documentId);
+                  onNavigateDoc?.(documentId);
+                }}
                 onReindex={permissions.canEditDocuments ? handleReindex : undefined}
                 canReindex={permissions.canEditDocuments}
                 reindexing={reindexingDocId === result.documentId}
-                onOpenSurfaceTarget={onOpenSurfaceTarget}
+                onOpenSurfaceTarget={(target) => {
+                  if (target.surface === 'operations' && 'jobId' in target.payload) {
+                    setSelectedTraceJobId(target.payload.jobId ?? null);
+                  }
+                  onOpenSurfaceTarget?.(target);
+                }}
               />
             ))}
           </div>

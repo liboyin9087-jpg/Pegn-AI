@@ -435,7 +435,7 @@ CREATE TABLE IF NOT EXISTS inbox_notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('mention', 'quota_alert', 'automation')),
+    type TEXT NOT NULL CHECK (type IN ('mention', 'assignment', 'quota_alert', 'automation')),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     status TEXT NOT NULL CHECK (status IN ('unread', 'read')) DEFAULT 'unread',
     read_at TIMESTAMP WITH TIME ZONE,
@@ -630,6 +630,57 @@ CREATE INDEX IF NOT EXISTS idx_saved_views_owner_workspace_surface_created_at ON
 CREATE INDEX IF NOT EXISTS idx_saved_views_workspace_scope_surface_pinned_created_at ON saved_views(workspace_id, scope, surface, is_pinned, created_at DESC);
 DROP TRIGGER IF EXISTS update_saved_views_updated_at ON saved_views;
 CREATE TRIGGER update_saved_views_updated_at BEFORE UPDATE ON saved_views FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS collaboration_threads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK (target_type IN ('document', 'agentRun', 'job', 'adminAlert')),
+    target_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'resolved')) DEFAULT 'open',
+    title TEXT,
+    created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_activity_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(workspace_id, target_type, target_id)
+);
+
+CREATE TABLE IF NOT EXISTS thread_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    thread_id UUID NOT NULL REFERENCES collaboration_threads(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    author_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    mentioned_user_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS thread_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    thread_id UUID NOT NULL REFERENCES collaboration_threads(id) ON DELETE CASCADE,
+    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    assigned_to_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('open', 'in_progress', 'resolved')) DEFAULT 'open',
+    due_at TIMESTAMP WITH TIME ZONE,
+    is_current BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_collaboration_threads_workspace_target ON collaboration_threads(workspace_id, target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_collaboration_threads_workspace_status_updated ON collaboration_threads(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_thread_comments_thread_created ON thread_comments(thread_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_thread_assignments_thread_current_created ON thread_assignments(thread_id, is_current, created_at DESC);
+DROP TRIGGER IF EXISTS update_collaboration_threads_updated_at ON collaboration_threads;
+CREATE TRIGGER update_collaboration_threads_updated_at BEFORE UPDATE ON collaboration_threads FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_thread_comments_updated_at ON thread_comments;
+CREATE TRIGGER update_thread_comments_updated_at BEFORE UPDATE ON thread_comments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_thread_assignments_updated_at ON thread_assignments;
+CREATE TRIGGER update_thread_assignments_updated_at BEFORE UPDATE ON thread_assignments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 
 -- ============================================================

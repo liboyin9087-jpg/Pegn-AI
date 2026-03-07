@@ -9,6 +9,8 @@ export interface WorkspacePermissionSummary {
   canEditDocuments: boolean;
   canDeleteDocuments: boolean;
   canRunAutomation: boolean;
+  canCollaborate: boolean;
+  canManageAssignments: boolean;
 }
 
 export interface WorkspaceMembershipSummary {
@@ -33,6 +35,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canEditDocuments: true,
     canDeleteDocuments: true,
     canRunAutomation: true,
+    canCollaborate: true,
+    canManageAssignments: true,
   },
   admin: {
     canViewWorkspace: true,
@@ -41,6 +45,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canEditDocuments: true,
     canDeleteDocuments: true,
     canRunAutomation: true,
+    canCollaborate: true,
+    canManageAssignments: true,
   },
   editor: {
     canViewWorkspace: true,
@@ -49,6 +55,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canEditDocuments: true,
     canDeleteDocuments: true,
     canRunAutomation: true,
+    canCollaborate: true,
+    canManageAssignments: true,
   },
   viewer: {
     canViewWorkspace: true,
@@ -57,6 +65,8 @@ export const ROLE_PERMISSION_MATRIX: Record<WorkspaceRole, WorkspacePermissionSu
     canEditDocuments: false,
     canDeleteDocuments: false,
     canRunAutomation: false,
+    canCollaborate: false,
+    canManageAssignments: false,
   },
 };
 
@@ -89,6 +99,15 @@ const CAPABILITY_PERMISSION_MAP: Record<keyof WorkspacePermissionSummary, string
   canRunAutomation: [
     'agent:run',
     'automation:trigger',
+  ],
+  canCollaborate: [
+    'thread:view',
+    'thread:create',
+    'thread:comment',
+    'thread:resolve',
+  ],
+  canManageAssignments: [
+    'thread:assign',
   ],
 };
 

@@ -393,6 +393,8 @@ export default function Sidebar({
     canEditDocuments: false,
     canDeleteDocuments: false,
     canRunAutomation: false,
+    canCollaborate: false,
+    canManageAssignments: false,
   };
   const [menuDocId, setMenuDocId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);

@@ -121,6 +121,7 @@ export default function AgentPanel({
   onOpenSurfaceTarget?: (target: SurfaceLinkTarget) => void;
 }) {
   const appContext = useOptionalAppContext();
+  const savedContext = appContext?.surfaceContexts?.agent;
   const refreshVersion = useRefreshVersion('agentRuns');
   const membership = workspaceMembershipSummary ?? appContext?.workspaceMembershipSummary ?? null;
   const permissions = membership?.permissionSummary ?? {
@@ -130,6 +131,8 @@ export default function AgentPanel({
     canEditDocuments: false,
     canDeleteDocuments: false,
     canRunAutomation: false,
+    canCollaborate: false,
+    canManageAssignments: false,
   };
 
   const [mode, setMode] = useState<AgentMode>('research');
@@ -270,6 +273,27 @@ export default function AgentPanel({
       void restoreRun(targetRunId, true);
     }
   }, [navigationTarget, restoreRun]);
+
+  useEffect(() => {
+    if (!savedContext) return;
+    if (savedContext.agentType && savedContext.agentType in MODE_CONFIG) {
+      setMode(savedContext.agentType as AgentMode);
+    }
+    if (savedContext.selectedRunId && savedContext.detailOpen) {
+      void restoreRun(savedContext.selectedRunId, true);
+    }
+  }, [restoreRun, savedContext]);
+
+  useEffect(() => {
+    appContext?.setSurfaceContext?.('agent', {
+      threadId: run?.threadId ?? null,
+      status: null,
+      agentType: mode,
+      selectedRunId: run?.runId ?? null,
+      detailOpen: Boolean(run),
+      showFailuresOnly: false,
+    });
+  }, [appContext, mode, run]);
 
   const handleStart = useCallback(async () => {
     if (!permissions.canRunAutomation || !workspaceId || !input.trim() || createPending) return;

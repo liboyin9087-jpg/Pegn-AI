@@ -105,6 +105,7 @@ interface CreateSavedViewParams {
   surface: SavedViewSurface;
   name: string;
   description?: string | null;
+  contextVersion?: number;
   payload: unknown;
   isPinned?: boolean;
   isDefault?: boolean;
@@ -117,6 +118,7 @@ interface UpdateSavedViewParams {
   userId: string;
   name?: string;
   description?: string | null;
+  contextVersion?: number;
   payload?: unknown;
   isPinned?: boolean;
   isDefault?: boolean;
@@ -171,30 +173,56 @@ export function validateSavedViewPayload(surface: SavedViewSurface, payload: unk
   const record = toRecord(payload);
   switch (surface) {
     case 'search':
+      if (record.query != null && typeof record.query !== 'string') throw new Error('Invalid search query');
+      if (record.filters != null && (typeof record.filters !== 'object' || Array.isArray(record.filters))) throw new Error('Invalid search filters');
+      if (record.type != null && typeof record.type !== 'string') throw new Error('Invalid search type');
+      if (record.source != null && typeof record.source !== 'string') throw new Error('Invalid search source');
       if (record.updatedRange && !['7d', '30d', 'all'].includes(String(record.updatedRange))) {
         throw new Error('Invalid search updatedRange');
       }
+      if (record.staleOnly != null && typeof record.staleOnly !== 'boolean') throw new Error('Invalid search staleOnly');
+      if (record.sort != null && typeof record.sort !== 'string') throw new Error('Invalid search sort');
+      if (record.selectedDocumentId != null && typeof record.selectedDocumentId !== 'string') throw new Error('Invalid search selectedDocumentId');
+      if (record.selectedTraceJobId != null && typeof record.selectedTraceJobId !== 'string') throw new Error('Invalid search selectedTraceJobId');
       return;
     case 'operations':
+      if (record.status != null && typeof record.status !== 'string') throw new Error('Invalid operations status');
+      if (record.jobType != null && typeof record.jobType !== 'string') throw new Error('Invalid operations jobType');
+      if (record.resourceType != null && typeof record.resourceType !== 'string') throw new Error('Invalid operations resourceType');
+      if (record.selectedJobId != null && typeof record.selectedJobId !== 'string') throw new Error('Invalid operations selectedJobId');
       if (record.detailOpen != null && typeof record.detailOpen !== 'boolean') throw new Error('Invalid operations detailOpen');
+      if (record.showFailedOnly != null && typeof record.showFailedOnly !== 'boolean') throw new Error('Invalid operations showFailedOnly');
       return;
     case 'agent':
+      if (record.threadId != null && typeof record.threadId !== 'string') throw new Error('Invalid agent threadId');
+      if (record.status != null && typeof record.status !== 'string') throw new Error('Invalid agent status');
+      if (record.agentType != null && typeof record.agentType !== 'string') throw new Error('Invalid agent agentType');
+      if (record.selectedRunId != null && typeof record.selectedRunId !== 'string') throw new Error('Invalid agent selectedRunId');
       if (record.detailOpen != null && typeof record.detailOpen !== 'boolean') throw new Error('Invalid agent detailOpen');
+      if (record.showFailuresOnly != null && typeof record.showFailuresOnly !== 'boolean') throw new Error('Invalid agent showFailuresOnly');
       return;
     case 'inbox':
+      if (record.filter != null && typeof record.filter !== 'string') throw new Error('Invalid inbox filter');
       if (record.unreadOnly != null && typeof record.unreadOnly !== 'boolean') throw new Error('Invalid inbox unreadOnly');
+      if (record.type != null && typeof record.type !== 'string') throw new Error('Invalid inbox type');
+      if (record.selectedNotificationId != null && typeof record.selectedNotificationId !== 'string') throw new Error('Invalid inbox selectedNotificationId');
       return;
     case 'admin':
       if (record.section && !['summary', 'usage', 'alerts', 'audit'].includes(String(record.section))) {
         throw new Error('Invalid admin section');
       }
+      if (record.auditFilter != null && typeof record.auditFilter !== 'string') throw new Error('Invalid admin auditFilter');
+      if (record.eventType != null && typeof record.eventType !== 'string') throw new Error('Invalid admin eventType');
+      if (record.targetType != null && typeof record.targetType !== 'string') throw new Error('Invalid admin targetType');
+      if (record.selectedAlertId != null && typeof record.selectedAlertId !== 'string') throw new Error('Invalid admin selectedAlertId');
       return;
     default:
       throw new Error('Unsupported surface');
   }
 }
 
-export function normalizeSavedViewPayload(surface: SavedViewSurface, payload: unknown): SavedViewPayload {
+export function normalizeSavedViewPayload(surface: SavedViewSurface, payload: unknown, contextVersion = 1): SavedViewPayload {
+  void contextVersion;
   const record = toRecord(payload);
   switch (surface) {
     case 'search':
@@ -289,7 +317,10 @@ export async function listSavedViews(params: ListSavedViewsParams): Promise<{ it
     `SELECT *
      FROM saved_views
      WHERE ${conditions.join(' AND ')}
-     ORDER BY is_pinned DESC, created_at DESC, id DESC`,
+     ORDER BY is_pinned DESC,
+              CASE WHEN scope = 'personal' THEN 0 ELSE 1 END ASC,
+              updated_at DESC,
+              id DESC`,
     values
   );
   return { items: result.rows.map(toSavedViewSummary) };
@@ -315,8 +346,12 @@ export async function createSavedView(params: CreateSavedViewParams): Promise<Sa
   if (params.scope === 'workspace' && !params.canManageWorkspaceViews) {
     throw new Error('FORBIDDEN');
   }
+  const contextVersion = params.contextVersion ?? 1;
+  if (contextVersion !== 1) {
+    throw new Error('Invalid saved view contextVersion');
+  }
   validateSavedViewPayload(params.surface, params.payload);
-  const normalizedPayload = normalizeSavedViewPayload(params.surface, params.payload);
+  const normalizedPayload = normalizeSavedViewPayload(params.surface, params.payload, contextVersion);
   if (params.isDefault) {
     await enforceDefaultViewRule(params.workspaceId, params.ownerUserId, params.surface);
   }
@@ -324,7 +359,7 @@ export async function createSavedView(params: CreateSavedViewParams): Promise<Sa
   const result = await db.query<SavedViewRow>(
     `INSERT INTO saved_views (
        workspace_id, owner_user_id, scope, surface, name, description, context_version, payload, is_pinned, is_default
-     ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7::jsonb, $8, $9)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
      RETURNING *`,
     [
       params.workspaceId,
@@ -333,6 +368,7 @@ export async function createSavedView(params: CreateSavedViewParams): Promise<Sa
       params.surface,
       params.name.trim(),
       params.description?.trim() ?? null,
+      contextVersion,
       JSON.stringify(normalizedPayload),
       Boolean(params.isPinned),
       Boolean(params.isDefault),
@@ -348,7 +384,13 @@ export async function updateSavedView(params: UpdateSavedViewParams): Promise<Sa
   if (!existing) return null;
   assertCanMutateView(existing, params.userId, params.canManageWorkspaceViews);
 
-  const nextPayload = params.payload == null ? existing.payload : normalizeSavedViewPayload(existing.surface, params.payload);
+  const nextContextVersion = params.contextVersion ?? existing.context_version ?? 1;
+  if (nextContextVersion !== 1) {
+    throw new Error('Invalid saved view contextVersion');
+  }
+  const nextPayload = params.payload == null
+    ? normalizeSavedViewPayload(existing.surface, existing.payload, nextContextVersion)
+    : normalizeSavedViewPayload(existing.surface, params.payload, nextContextVersion);
   if (params.payload != null) validateSavedViewPayload(existing.surface, params.payload);
   const nextIsDefault = params.isDefault ?? existing.is_default;
   if (nextIsDefault) {
@@ -359,9 +401,10 @@ export async function updateSavedView(params: UpdateSavedViewParams): Promise<Sa
     `UPDATE saved_views
      SET name = $3,
          description = $4,
-         payload = $5::jsonb,
-         is_pinned = $6,
-         is_default = $7,
+         context_version = $5,
+         payload = $6::jsonb,
+         is_pinned = $7,
+         is_default = $8,
          updated_at = NOW()
      WHERE id = $1 AND workspace_id = $2
      RETURNING *`,
@@ -370,6 +413,7 @@ export async function updateSavedView(params: UpdateSavedViewParams): Promise<Sa
       params.workspaceId,
       params.name?.trim() ?? existing.name,
       params.description === undefined ? existing.description : params.description?.trim() ?? null,
+      nextContextVersion,
       JSON.stringify(nextPayload),
       params.isPinned ?? existing.is_pinned,
       nextIsDefault,

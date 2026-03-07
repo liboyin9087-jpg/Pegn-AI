@@ -52,6 +52,7 @@ export default function OperationsPanel({
 }) {
   const permissions = useWorkspacePermissions();
   const appContext = useOptionalAppContext();
+  const savedContext = appContext?.surfaceContexts?.operations;
   const refreshVersion = useRefreshVersion('jobs');
   const [statusFilter, setStatusFilter] = useState<'all' | JobStatus>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | JobType>(initialJobType);
@@ -125,6 +126,29 @@ export default function OperationsPanel({
       void loadJobDetail(navigationTarget.payload.jobId);
     }
   }, [loadJobDetail, navigationTarget]);
+
+  useEffect(() => {
+    if (!savedContext) return;
+    setStatusFilter((savedContext.status as 'all' | JobStatus | null) ?? 'all');
+    setTypeFilter((savedContext.jobType as 'all' | JobType | null) ?? 'all');
+    if (savedContext.selectedJobId && savedContext.detailOpen) {
+      void loadJobDetail(savedContext.selectedJobId);
+    } else if (!savedContext.detailOpen) {
+      setSelectedJob(null);
+      setEvents([]);
+    }
+  }, [loadJobDetail, savedContext]);
+
+  useEffect(() => {
+    appContext?.setSurfaceContext?.('operations', {
+      status: statusFilter === 'all' ? null : statusFilter,
+      jobType: typeFilter === 'all' ? null : typeFilter,
+      resourceType: null,
+      selectedJobId: selectedJob?.id ?? null,
+      detailOpen: Boolean(selectedJob),
+      showFailedOnly: statusFilter === 'failed',
+    });
+  }, [appContext, selectedJob, statusFilter, typeFilter]);
 
   const activeFailedJobs = useMemo(
     () => jobs.filter((job) => job.status === 'failed' || job.status === 'timeout'),

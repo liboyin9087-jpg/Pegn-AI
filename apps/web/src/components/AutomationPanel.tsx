@@ -584,6 +584,8 @@ export default function AutomationPanel({ workspaceId, workspaceMembershipSummar
     canEditDocuments: false,
     canDeleteDocuments: false,
     canRunAutomation: false,
+    canCollaborate: false,
+    canManageAssignments: false,
   };
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [loading, setLoading] = useState(true);

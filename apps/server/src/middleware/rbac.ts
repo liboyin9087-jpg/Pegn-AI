@@ -22,8 +22,10 @@ type ResourceType =
   | 'collection_view'
   | 'document'
   | 'automation'
+  | 'agent_run'
   | 'kg_entity'
   | 'comment_thread'
+  | 'collaboration_thread'
   | 'inbox_notification'
   | 'none';
 
@@ -57,6 +59,11 @@ const PERMISSION_CAPABILITY_MAP: Record<string, Capability> = {
   'document:delete': 'canDeleteDocuments',
   'agent:run': 'canRunAutomation',
   'automation:trigger': 'canRunAutomation',
+  'thread:view': 'canCollaborate',
+  'thread:create': 'canCollaborate',
+  'thread:comment': 'canCollaborate',
+  'thread:resolve': 'canCollaborate',
+  'thread:assign': 'canManageAssignments',
 };
 
 function getResultRowCount(result: { rowCount?: number | null; rows?: unknown[] }): number {
@@ -120,10 +127,24 @@ async function resolveWorkspaceId(req: AuthRequest, resourceType: ResourceType):
       return result.rows[0]?.workspace_id;
     }
 
+    if (resourceType === 'agent_run') {
+      const runId = req.params.run_id || req.params.runId || req.params.id;
+      if (!runId) return undefined;
+      const result = await p.query('SELECT workspace_id FROM agent_runs WHERE id = $1', [runId]);
+      return result.rows[0]?.workspace_id;
+    }
+
     if (resourceType === 'comment_thread') {
       const threadId = req.params.thread_id || req.params.threadId || req.params.id;
       if (!threadId) return undefined;
       const result = await p.query('SELECT workspace_id FROM comment_threads WHERE id = $1', [threadId]);
+      return result.rows[0]?.workspace_id;
+    }
+
+    if (resourceType === 'collaboration_thread') {
+      const threadId = req.params.thread_id || req.params.threadId || req.params.id;
+      if (!threadId) return undefined;
+      const result = await p.query('SELECT workspace_id FROM collaboration_threads WHERE id = $1', [threadId]);
       return result.rows[0]?.workspace_id;
     }
 

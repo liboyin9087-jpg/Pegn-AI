@@ -8,8 +8,11 @@ import KGPanel from './KGPanel';
 import AutomationPanel from './AutomationPanel';
 import OperationsPanel from './OperationsPanel';
 import AdminTrustPanel from './AdminTrustPanel';
-import { useWorkspacePermissions } from '../contexts/AppContext';
-import type { JobType, SurfaceLinkTarget } from '../api/client';
+import { useOptionalAppContext, useWorkspacePermissions } from '../contexts/AppContext';
+import type { JobType, SavedViewSurface, SurfaceLinkTarget } from '../api/client';
+import PinnedViewsBar from './PinnedViewsBar';
+import SavedViewPicker from './SavedViewPicker';
+import SaveCurrentViewDialog from './SaveCurrentViewDialog';
 
 type Tab = 'chat' | 'search' | 'agent' | 'kg' | 'automation' | 'operations' | 'admin';
 
@@ -45,10 +48,19 @@ export default function AiSheet({
   navigationTarget,
   onOpenSurfaceTarget,
 }: Props) {
+  const appContext = useOptionalAppContext();
   const workspacePermissions = useWorkspacePermissions();
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [operationsType, setOperationsType] = useState<'all' | JobType>('all');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [savedViewsRefreshNonce, setSavedViewsRefreshNonce] = useState(0);
+
+  const activeSavedViewSurface: SavedViewSurface | null =
+    tab === 'search' || tab === 'operations' || tab === 'agent' || tab === 'admin'
+      ? tab
+      : null;
 
   const openOperations = (options?: { jobId?: string | null; jobType?: 'all' | JobType }) => {
     setSelectedJobId(options?.jobId ?? null);
@@ -150,6 +162,12 @@ export default function AiSheet({
               </button>
             </div>
 
+            <PinnedViewsBar
+              workspaceId={workspaceId}
+              refreshNonce={savedViewsRefreshNonce}
+              onApplyView={(view) => appContext?.applySavedView?.(view)}
+            />
+
             <div
               className="flex flex-shrink-0 px-4 gap-1"
               style={{ paddingTop: 10, paddingBottom: 10, borderBottom: '1px solid #e8e8ea' }}
@@ -170,6 +188,47 @@ export default function AiSheet({
                   {nextTab.label}
                 </button>
               ))}
+              {activeSavedViewSurface ? (
+                <div className="ml-auto relative flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaveDialogOpen(false);
+                      setPickerOpen((current) => !current);
+                    }}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary"
+                  >
+                    Views
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      setSaveDialogOpen((current) => !current);
+                    }}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary"
+                  >
+                    Save
+                  </button>
+                  <SavedViewPicker
+                    open={pickerOpen}
+                    workspaceId={workspaceId}
+                    surface={activeSavedViewSurface}
+                    onClose={() => setPickerOpen(false)}
+                    onApplyView={(view) => {
+                      appContext?.applySavedView?.(view);
+                    }}
+                  />
+                  <SaveCurrentViewDialog
+                    open={saveDialogOpen}
+                    workspaceId={workspaceId}
+                    surface={activeSavedViewSurface}
+                    payload={appContext?.captureCurrentSurfaceContext?.(activeSavedViewSurface) ?? null}
+                    onClose={() => setSaveDialogOpen(false)}
+                    onSaved={() => setSavedViewsRefreshNonce((current) => current + 1)}
+                  />
+                </div>
+              ) : null}
             </div>
 
             <div className="relative flex-1 overflow-hidden">

@@ -196,6 +196,8 @@ export interface WorkspacePermissionSummary {
   canEditDocuments: boolean;
   canDeleteDocuments: boolean;
   canRunAutomation: boolean;
+  canCollaborate: boolean;
+  canManageAssignments: boolean;
 }
 
 export interface WorkspaceMembershipSummary {
@@ -315,6 +317,66 @@ export type SavedViewPayload =
   | AgentViewPayload
   | InboxViewPayload
   | AdminViewPayload;
+
+export type CollaborationTargetType = 'document' | 'agentRun' | 'job' | 'adminAlert';
+export type CollaborationThreadStatus = 'open' | 'in_progress' | 'resolved';
+
+export interface ThreadAssignment {
+  assignmentId: string;
+  threadId: string;
+  assignedToUserId: string;
+  assignedByUserId: string;
+  status: CollaborationThreadStatus;
+  dueAt: string | null;
+  isCurrent: boolean;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ThreadComment {
+  commentId: string;
+  threadId: string;
+  author: {
+    userId: string;
+    name: string | null;
+    email: string | null;
+  };
+  body: string;
+  mentionedUserIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ThreadSummary {
+  threadId: string;
+  targetType: CollaborationTargetType;
+  targetId: string;
+  status: CollaborationThreadStatus;
+  title: string;
+  latestCommentPreview: string | null;
+  commentCount: number;
+  currentAssignment: ThreadAssignment | null;
+  lastActivityAt: string;
+  sourceTarget: SurfaceLinkTarget;
+}
+
+export interface CollaborationThread {
+  threadId: string;
+  workspaceId: string;
+  targetType: CollaborationTargetType;
+  targetId: string;
+  status: CollaborationThreadStatus;
+  title: string;
+  commentCount: number;
+  currentAssignment: ThreadAssignment | null;
+  sourceTarget: SurfaceLinkTarget;
+  createdByUserId: string;
+  lastActivityAt: string;
+  resolvedAt: string | null;
+  comments: ThreadComment[];
+  assignmentHistory: ThreadAssignment[];
+}
 
 export interface SavedViewSummary {
   id: string;
@@ -841,6 +903,7 @@ export const createSavedView = (
     surface: SavedViewSurface;
     name: string;
     description?: string | null;
+    contextVersion?: number;
     payload: SavedViewPayload;
     isPinned?: boolean;
     isDefault?: boolean;
@@ -857,6 +920,7 @@ export const updateSavedView = (
   payload: {
     name?: string;
     description?: string | null;
+    contextVersion?: number;
     payload?: SavedViewPayload;
     isPinned?: boolean;
     isDefault?: boolean;
@@ -870,6 +934,61 @@ export const updateSavedView = (
 export const deleteSavedView = (workspaceId: string, viewId: string) =>
   api<undefined>(`/workspaces/${workspaceId}/saved-views/${viewId}`, {
     method: 'DELETE',
+  });
+
+export const createOrGetThread = (payload: {
+  workspaceId: string;
+  targetType: CollaborationTargetType;
+  targetId: string;
+  title?: string | null;
+}) =>
+  api<CollaborationThread>('/threads', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const listThreads = (query: {
+  workspaceId: string;
+  targetType?: CollaborationTargetType;
+  status?: CollaborationThreadStatus;
+  assignedToMe?: boolean;
+  cursor?: string;
+  limit?: number;
+}) => {
+  const params = new URLSearchParams({ workspaceId: query.workspaceId });
+  if (query.targetType) params.set('targetType', query.targetType);
+  if (query.status) params.set('status', query.status);
+  if (query.assignedToMe) params.set('assignedToMe', 'true');
+  if (query.cursor) params.set('cursor', query.cursor);
+  if (typeof query.limit === 'number') params.set('limit', String(query.limit));
+  return api<{ items: ThreadSummary[]; nextCursor: string | null }>(`/threads?${params.toString()}`);
+};
+
+export const getThreadDetail = (threadId: string) =>
+  api<CollaborationThread>(`/threads/${threadId}`);
+
+export const addThreadComment = (threadId: string, payload: { body: string; mentionedUserIds?: string[] }) =>
+  api<ThreadComment>(`/threads/${threadId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const assignThread = (threadId: string, payload: { assignedToUserId: string; dueAt?: string | null }) =>
+  api<ThreadAssignment>(`/threads/${threadId}/assignments`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const resolveThread = (threadId: string) =>
+  api<{ threadId: string; status: CollaborationThreadStatus; resolvedAt: string | null }>(`/threads/${threadId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+export const reopenThread = (threadId: string) =>
+  api<{ threadId: string; status: CollaborationThreadStatus }>(`/threads/${threadId}/reopen`, {
+    method: 'POST',
+    body: JSON.stringify({}),
   });
 
 // ── Documents ────────────────────────────────────────────────
@@ -1183,12 +1302,31 @@ export type InboxNotification =
   | (InboxNotificationBase & {
       type: 'mention';
       payload: {
-        workspace_id: string;
-        document_id: string;
-        thread_id: string;
-        comment_id: string;
-        mentioned_by: string;
+        workspace_id?: string;
+        document_id?: string;
+        thread_id?: string;
+        comment_id?: string;
+        mentioned_by?: string;
+        target_type?: CollaborationTargetType;
+        target_id?: string;
+        run_id?: string;
+        job_id?: string;
         preview?: string;
+      };
+    })
+  | (InboxNotificationBase & {
+      type: 'assignment';
+      payload: {
+        thread_id?: string;
+        target_type?: CollaborationTargetType;
+        target_id?: string;
+        assigned_by_user_id?: string;
+        summary: string;
+        message?: string;
+        due_at?: string | null;
+        run_id?: string;
+        job_id?: string;
+        document_id?: string;
       };
     })
   | (InboxNotificationBase & {
@@ -1257,12 +1395,33 @@ export function normalizeInboxNotification(notification: RawInboxNotification): 
         ...base,
         type: 'mention',
         payload: {
-          workspace_id: toSafeString(payload.workspace_id),
-          document_id: toSafeString(payload.document_id),
-          thread_id: toSafeString(payload.thread_id),
-          comment_id: toSafeString(payload.comment_id),
-          mentioned_by: toSafeString(payload.mentioned_by),
+          ...(typeof payload.workspace_id === 'string' ? { workspace_id: payload.workspace_id } : {}),
+          ...(typeof payload.document_id === 'string' ? { document_id: payload.document_id } : {}),
+          ...(typeof payload.thread_id === 'string' ? { thread_id: payload.thread_id } : {}),
+          ...(typeof payload.comment_id === 'string' ? { comment_id: payload.comment_id } : {}),
+          ...(typeof payload.mentioned_by === 'string' ? { mentioned_by: payload.mentioned_by } : {}),
+          ...(typeof payload.target_type === 'string' ? { target_type: payload.target_type as CollaborationTargetType } : {}),
+          ...(typeof payload.target_id === 'string' ? { target_id: payload.target_id } : {}),
+          ...(typeof payload.run_id === 'string' ? { run_id: payload.run_id } : {}),
+          ...(typeof payload.job_id === 'string' ? { job_id: payload.job_id } : {}),
           ...(typeof payload.preview === 'string' ? { preview: payload.preview } : {}),
+        },
+      };
+    case 'assignment':
+      return {
+        ...base,
+        type: 'assignment',
+        payload: {
+          summary: toSafeString(payload.summary, notification.summary || 'A thread was assigned to you.'),
+          ...(typeof payload.thread_id === 'string' ? { thread_id: payload.thread_id } : {}),
+          ...(typeof payload.target_type === 'string' ? { target_type: payload.target_type as CollaborationTargetType } : {}),
+          ...(typeof payload.target_id === 'string' ? { target_id: payload.target_id } : {}),
+          ...(typeof payload.assigned_by_user_id === 'string' ? { assigned_by_user_id: payload.assigned_by_user_id } : {}),
+          ...(typeof payload.message === 'string' ? { message: payload.message } : {}),
+          ...(typeof payload.due_at === 'string' ? { due_at: payload.due_at } : {}),
+          ...(typeof payload.run_id === 'string' ? { run_id: payload.run_id } : {}),
+          ...(typeof payload.job_id === 'string' ? { job_id: payload.job_id } : {}),
+          ...(typeof payload.document_id === 'string' ? { document_id: payload.document_id } : {}),
         },
       };
     case 'quota_alert':
