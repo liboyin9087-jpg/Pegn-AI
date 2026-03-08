@@ -531,10 +531,14 @@ export async function markAllInboxNotificationsRead(userId: string, workspaceId?
 }
 
 export function getInboxWorkspaceScope(req: AuthRequest): string | null {
+  if (req.workspaceId) return req.workspaceId;
   const workspaceId = typeof req.query.workspace_id === 'string'
     ? req.query.workspace_id
     : typeof req.query.workspaceId === 'string'
       ? req.query.workspaceId
       : null;
+  if (workspaceId) {
+    req.workspaceId = workspaceId;
+  }
   return workspaceId;
 }

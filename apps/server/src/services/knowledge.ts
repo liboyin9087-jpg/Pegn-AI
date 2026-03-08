@@ -1,11 +1,7 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { pool } from '../db/client.js';
 import { graphRAGQuery } from './graphrag.js';
 import { searchService } from './search.js';
-
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-  : null;
+import { generateTextWithFallback } from './llm.js';
 
 export type KnowledgeMode = 'auto' | 'hybrid' | 'graph';
 export type KnowledgeModeUsed = 'hybrid' | 'graph';
@@ -36,11 +32,6 @@ export interface KnowledgeResult {
   };
 }
 
-async function getModel() {
-  if (!genAI) return null;
-  return genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
-}
-
 async function getEntityHits(query: string, workspaceId: string): Promise<KnowledgeEntity[]> {
   const p = pool;
   if (!p) return [];
@@ -64,41 +55,31 @@ async function getEntityHits(query: string, workspaceId: string): Promise<Knowle
 async function synthesizeHybridAnswer(query: string, sources: KnowledgeSource[]): Promise<{ answer: string; citations: string[] }> {
   if (sources.length === 0) {
     return {
-      answer: '目前沒有足夠的檢索結果可以回答這個問題。',
+      answer: 'No grounded sources were found for this query.',
       citations: [],
     };
   }
 
   const context = sources
     .slice(0, 6)
-    .map((s, i) => `[${i + 1}] ${s.content}`)
+    .map((source, index) => `[${index + 1}] ${source.content}`)
     .join('\n\n');
 
-  const model = await getModel();
-  if (!model) {
-    return {
-      answer: context,
-      citations: [],
-    };
-  }
+  const prompt = `Answer the user query using only the cited evidence. Keep the answer concise and include citations like [1] when claims are grounded.\n\nUser query:\n${query}\n\nEvidence:\n${context}`;
+  const result = await generateTextWithFallback({
+    feature: 'knowledge_query',
+    prompt,
+    fallbackText: context,
+  });
 
-  const prompt = `根據參考資料回答問題，並使用 [數字] 進行引用。\n\n問題：${query}\n\n參考資料：\n${context}\n\n請用繁體中文回答。`;
-
-  try {
-    const result = await model.generateContent(prompt);
-    const answer = result.response.text();
-    const citations = [...new Set(answer.match(/\[(\d+)\]/g) ?? [])];
-    return { answer, citations };
-  } catch {
-    return {
-      answer: context,
-      citations: [],
-    };
-  }
+  return {
+    answer: result.text,
+    citations: [...new Set(result.text.match(/\[(\d+)\]/g) ?? [])],
+  };
 }
 
 function hasGraphIntent(query: string): boolean {
-  return /(關係|關聯|脈絡|因果|影響|網絡|graph|network|between|關於.*之間)/i.test(query);
+  return /(relationship|graph|network|between|connected|link)/i.test(query);
 }
 
 function selectModeAuto(input: {
@@ -169,10 +150,10 @@ export async function knowledgeQuery(params: {
     };
   }
 
-  const sources: KnowledgeSource[] = hybrid.results.map((r) => ({
-    content: r.content,
-    document_id: r.document_id,
-    score: r.score,
+  const sources: KnowledgeSource[] = hybrid.results.map((result) => ({
+    content: result.content,
+    document_id: result.document_id,
+    score: result.score,
     type: 'hybrid',
   }));
 
@@ -191,4 +172,3 @@ export async function knowledgeQuery(params: {
     },
   };
 }
-

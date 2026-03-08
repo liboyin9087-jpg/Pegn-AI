@@ -215,7 +215,12 @@ export class ObservabilityService {
         await pool.query('SELECT 1');
         checks.database = {
           status: 'healthy',
-          latency: Date.now() - start
+          latency: Date.now() - start,
+          pool: {
+            total: pool.totalCount,
+            idle: pool.idleCount,
+            waiting: pool.waitingCount,
+          },
         };
       } else {
         checks.database = {

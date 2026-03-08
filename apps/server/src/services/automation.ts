@@ -21,6 +21,7 @@
 
 import crypto from 'node:crypto';
 import { pool } from '../db/client.js';
+import { runWithSystemDbContext } from '../db/context.js';
 import { observability } from './observability.js';
 import { startSupervisorRun } from './agent.js';
 import {
@@ -464,56 +465,66 @@ export async function dispatchAutomationExecution(
   triggeredBy: 'event' | 'schedule' | 'manual' = 'event',
   options: { retryOfJobId?: string | null } = {}
 ): Promise<AutomationDispatchResult> {
-  const job = await createAutomationJob(automation, event, triggeredBy, options.retryOfJobId);
+  return runWithSystemDbContext(
+    {
+      workspaceId: automation.workspace_id,
+      userId: event.triggeredBy ?? automation.created_by,
+    },
+    async () => {
+      const job = await createAutomationJob(automation, event, triggeredBy, options.retryOfJobId);
 
-  void Promise.resolve()
-    .then(() => executeAutomation(automation, event, triggeredBy, job))
-    .catch((error) => observability.error('[automation] executeAutomation failed', { automationId: automation.id, err: String(error) }));
+      void Promise.resolve()
+        .then(() => executeAutomation(automation, event, triggeredBy, job))
+        .catch((error) => observability.error('[automation] executeAutomation failed', { automationId: automation.id, err: String(error) }));
 
-  return {
-    jobId: job.id,
-    status: job.status,
-  };
+      return {
+        jobId: job.id,
+        status: job.status,
+      };
+    }
+  );
 }
 
 export async function retryAutomationJob(
   job: Pick<JobRecord, 'id' | 'workspaceId' | 'metadata'>,
   userId: string
 ): Promise<AutomationDispatchResult> {
-  const automationId = typeof job.metadata?.automationId === 'string' ? job.metadata.automationId : null;
-  if (!automationId) {
-    throw new Error('Automation retry job is missing automationId metadata');
-  }
+  return runWithSystemDbContext({ workspaceId: job.workspaceId, userId }, async () => {
+    const automationId = typeof job.metadata?.automationId === 'string' ? job.metadata.automationId : null;
+    if (!automationId) {
+      throw new Error('Automation retry job is missing automationId metadata');
+    }
 
-  const p = pool;
-  if (!p) {
-    throw new Error('Database unavailable');
-  }
+    const p = pool;
+    if (!p) {
+      throw new Error('Database unavailable');
+    }
 
-  const result = await p.query<AutomationRow>(
-    'SELECT * FROM automations WHERE id = $1 AND workspace_id = $2 LIMIT 1',
-    [automationId, job.workspaceId]
-  );
-  const automation = result.rows[0];
-  if (!automation) {
-    throw new Error('Automation not found');
-  }
+    const result = await p.query<AutomationRow>(
+      'SELECT * FROM automations WHERE id = $1 AND workspace_id = $2 LIMIT 1',
+      [automationId, job.workspaceId]
+    );
+    const automation = result.rows[0];
+    if (!automation) {
+      throw new Error('Automation not found');
+    }
 
-  return dispatchAutomationExecution(
-    automation,
-    {
-      type: automation.trigger_type,
-      workspaceId: automation.workspace_id,
-      entityType: typeof job.metadata?.entityType === 'string' ? job.metadata.entityType as AutomationEvent['entityType'] : undefined,
-      entityId: typeof job.metadata?.entityId === 'string' ? job.metadata.entityId : undefined,
-      payload: job.metadata?.payload && typeof job.metadata.payload === 'object'
-        ? job.metadata.payload as Record<string, unknown>
-        : {},
-      triggeredBy: userId,
-    },
-    'manual',
-    { retryOfJobId: job.id }
-  );
+    return dispatchAutomationExecution(
+      automation,
+      {
+        type: automation.trigger_type,
+        workspaceId: automation.workspace_id,
+        entityType: typeof job.metadata?.entityType === 'string' ? job.metadata.entityType as AutomationEvent['entityType'] : undefined,
+        entityId: typeof job.metadata?.entityId === 'string' ? job.metadata.entityId : undefined,
+        payload: job.metadata?.payload && typeof job.metadata.payload === 'object'
+          ? job.metadata.payload as Record<string, unknown>
+          : {},
+        triggeredBy: userId,
+      },
+      'manual',
+      { retryOfJobId: job.id }
+    );
+  });
 }
 
 // ── AutomationEngine — listens to event bus ───────────────────────────────

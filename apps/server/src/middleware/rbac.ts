@@ -9,6 +9,7 @@ import {
 } from '../lib/workspaceRoles.js';
 import type { AuthRequest } from './auth.js';
 import { observability } from '../services/observability.js';
+import { getWorkspaceIdFromRequest } from '../services/request.js';
 
 export interface RBACRequest extends AuthRequest {
   userPermissions?: string[];
@@ -81,10 +82,7 @@ async function resolveWorkspaceId(req: AuthRequest, resourceType: ResourceType):
   };
 
   let workspaceId =
-    req.params.workspace_id ||
-    req.params.workspaceId ||
-    req.body?.workspace_id ||
-    req.body?.workspaceId ||
+    getWorkspaceIdFromRequest(req) ||
     fromQuery('workspace_id') ||
     fromQuery('workspaceId');
 

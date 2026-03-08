@@ -1,9 +1,12 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { runWithDbRequestContext } from '../db/context.js';
+import { getWorkspaceIdFromRequest } from '../services/request.js';
 
 export interface AuthRequest extends Request {
   userId?: string;
   userEmail?: string;
+  workspaceId?: string;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
@@ -27,7 +30,18 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     const payload = jwt.verify(token, JWT_SECRET) as { userId: string; email: string };
     req.userId = payload.userId;
     req.userEmail = payload.email;
-    next();
+    const workspaceId = getWorkspaceIdFromRequest(req);
+    if (workspaceId) {
+      req.workspaceId = workspaceId;
+    }
+    runWithDbRequestContext(
+      {
+        userId: payload.userId,
+        userEmail: payload.email,
+        workspaceId: workspaceId ?? null,
+      },
+      () => next()
+    );
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
   }

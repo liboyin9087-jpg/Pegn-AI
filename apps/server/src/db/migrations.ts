@@ -14,9 +14,12 @@ export async function runMigrations(): Promise<void> {
 
   try {
     const schemaSql = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
+    const rlsSql = readFileSync(join(__dirname, 'rls.sql'), 'utf-8');
     await pool.query(schemaSql);
     console.log('[migrations] Database schema initialized successfully');
     await runColumnMigrations();
+    await pool.query(rlsSql);
+    console.log('[migrations] Security policies initialized successfully');
     await initDefaultRoles();
   } catch (error) {
     console.error('[migrations] Failed to run migrations:', error);

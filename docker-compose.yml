@@ -1,12 +1,13 @@
+# Local development compose only. Production deploys should use Cloud Run-managed services.
 version: "3.9"
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ai_native
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_native}
     ports:
       - "5432:5432"
     volumes:
@@ -49,11 +50,12 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ai_native
-      REDIS_URL: redis://redis:6379
-      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ai_native}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      NODE_ENV: ${NODE_ENV:-development}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: pegn-ai-server
+      DATABASE_AUTO_MIGRATE: ${DATABASE_AUTO_MIGRATE:-true}
     depends_on:
       postgres:
         condition: service_healthy

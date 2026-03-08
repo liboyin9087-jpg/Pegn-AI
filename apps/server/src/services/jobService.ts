@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { pool } from '../db/client.js';
+import { runWithSystemDbContext } from '../db/context.js';
 
 export type JobType =
   | 'document_index'
@@ -704,28 +705,30 @@ export async function isCancelRequested(jobId: string, workspaceId: string): Pro
 }
 
 export async function recoverRunningJobsOnBoot(): Promise<number> {
-  const p = pool;
-  if (!p) return 0;
+  return runWithSystemDbContext({}, async () => {
+    const p = pool;
+    if (!p) return 0;
 
-  const result = await p.query<JobRow>(
-    `UPDATE jobs
-     SET status = 'failed',
-         error_code = 'server_restart',
-         error_summary = COALESCE(error_summary, 'Job interrupted by server restart'),
-         finished_at = NOW(),
-         updated_at = NOW()
-     WHERE status = 'running'
-     RETURNING *`
-  );
+    const result = await p.query<JobRow>(
+      `UPDATE jobs
+       SET status = 'failed',
+           error_code = 'server_restart',
+           error_summary = COALESCE(error_summary, 'Job interrupted by server restart'),
+           finished_at = NOW(),
+           updated_at = NOW()
+       WHERE status = 'running'
+       RETURNING *`
+    );
 
-  for (const row of result.rows) {
-    await appendJobEvent({
-      jobId: row.id,
-      eventType: 'failed',
-      message: 'Job interrupted by server restart',
-      payload: { recovery: 'boot' },
-    }).catch(() => undefined);
-  }
+    for (const row of result.rows) {
+      await appendJobEvent({
+        jobId: row.id,
+        eventType: 'failed',
+        message: 'Job interrupted by server restart',
+        payload: { recovery: 'boot' },
+      }).catch(() => undefined);
+    }
 
-  return result.rows.length;
+    return result.rows.length;
+  });
 }

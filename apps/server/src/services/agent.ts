@@ -1,6 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import crypto from 'node:crypto';
 import { pool } from '../db/client.js';
+import { runWithSystemDbContext } from '../db/context.js';
 import { observability } from './observability.js';
 import { graphRAGQuery } from './graphrag.js';
 import { searchService } from './search.js';
@@ -18,10 +18,7 @@ import {
   type JobRecord,
 } from './jobService.js';
 import { createAgentTarget, createOperationsTarget, type SurfaceLinkTarget } from './surfaceTargets.js';
-
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-  : null;
+import { generateTextWithFallback, streamTextWithFallback } from './llm.js';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error' | 'aborted';
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -537,11 +534,6 @@ async function assertAgentJobNotCancelled(jobId: string, workspaceId: string): P
   throw new Error('JOB_CANCELLED');
 }
 
-async function getModel() {
-  if (!genAI) return null;
-  return genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
-}
-
 async function loadRunRow(
   runId: string,
   scope?: { workspaceId?: string; userId?: string }
@@ -677,28 +669,28 @@ function fallbackTaskPlan(input: string, template: AgentTemplate): string[] {
 }
 
 async function plannerWorker(input: string, template: AgentTemplate): Promise<{ tasks: string[]; intent: string }> {
-  const model = await getModel();
-  if (!model) {
-    return { tasks: fallbackTaskPlan(input, template), intent: input };
-  }
-
   const prompt = getAgentTemplate(template).plannerPrompt(input);
+  const fallback = { tasks: fallbackTaskPlan(input, template), intent: input };
   try {
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
+    const result = await generateTextWithFallback({
+      feature: 'agent_planner',
+      prompt,
+      fallbackText: JSON.stringify(fallback),
+    });
+    const raw = result.text.trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
     const parsed = JSON.parse(raw);
     const tasks = Array.isArray(parsed.tasks)
       ? parsed.tasks.map((task: unknown) => String(task)).filter(Boolean).slice(0, 4)
       : [];
     if (tasks.length === 0) {
-      return { tasks: fallbackTaskPlan(input, template), intent: input };
+      return fallback;
     }
     return {
       tasks,
       intent: parsed.intent ? String(parsed.intent) : input,
     };
   } catch {
-    return { tasks: fallbackTaskPlan(input, template), intent: input };
+    return fallback;
   }
 }
 
@@ -755,36 +747,33 @@ async function retrieveForTask(task: string, workspaceId: string, mode: 'auto' |
 }
 
 async function analystWorker(retrieved: any[], input: string, template: AgentTemplate = 'supervisor'): Promise<{ analysis: string; key_points: string[] }> {
-  const model = await getModel();
   const evidenceText = retrieved
     .map((item: any, index: number) => `#${index + 1} task=${item.task}\nmode=${item.mode_used}\nanswer=${item.answer}`)
     .join('\n\n');
-
-  if (!model) {
-    return {
-      analysis: evidenceText.slice(0, 3000),
-      key_points: retrieved.slice(0, 3).map((item: any) => `${item.task} -> ${item.mode_used}`),
-    };
-  }
+  const fallback = {
+    analysis: evidenceText.slice(0, 3000),
+    key_points: retrieved.slice(0, 3).map((item: any) => `${item.task} -> ${item.mode_used}`),
+  };
 
   const analystHint = getAgentTemplate(template).analystHint
     ?? 'Synthesize the worker evidence into a concise, grounded analysis.';
   const prompt = `You are the analyst.\n${analystHint}\nReturn JSON {"analysis":"...","key_points":["..."]}\n\nUser query: ${input}\n\nEvidence:\n${evidenceText}`;
   try {
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
+    const result = await generateTextWithFallback({
+      feature: 'agent_analyst',
+      prompt,
+      fallbackText: JSON.stringify(fallback),
+    });
+    const raw = result.text.trim().replace(/^```json\n?/, '').replace(/\n?```$/, '');
     const parsed = JSON.parse(raw);
     return {
-      analysis: String(parsed.analysis ?? evidenceText.slice(0, 3000)),
+      analysis: String(parsed.analysis ?? fallback.analysis),
       key_points: Array.isArray(parsed.key_points)
         ? parsed.key_points.map((item: unknown) => String(item)).slice(0, 8)
         : [],
     };
   } catch {
-    return {
-      analysis: evidenceText.slice(0, 3000),
-      key_points: retrieved.slice(0, 3).map((item: any) => `${item.task} -> ${item.mode_used}`),
-    };
+    return fallback;
   }
 }
 
@@ -794,30 +783,22 @@ async function writerWorker(
   template: AgentTemplate,
   onToken?: (token: string) => void
 ): Promise<{ answer: string; citations: string[] }> {
-  const model = await getModel();
   const basePrompt = getAgentTemplate(template).writerInstruction;
-
-  if (!model) {
-    const answer = `${basePrompt}\n\nInput: ${input}\n\n${analysis.analysis ?? ''}`;
-    return { answer, citations: [] };
-  }
+  const fallbackAnswer = `${basePrompt}\n\nInput: ${input}\n\n${analysis.analysis ?? ''}`;
 
   const prompt = `${basePrompt}\n\nInput: ${input}\n\nAnalysis:\n${analysis.analysis ?? ''}`;
   try {
-    const stream = await model.generateContentStream(prompt);
-    let answer = '';
-    for await (const chunk of stream.stream) {
-      const text = chunk.text();
-      if (text) {
-        answer += text;
-        onToken?.(text);
-      }
-    }
+    const result = await streamTextWithFallback({
+      feature: 'agent_writer',
+      prompt,
+      fallbackText: fallbackAnswer,
+      onToken,
+    });
+    const answer = result.text;
     const citations = [...new Set(answer.match(/\[(\d+)\]/g) ?? [])];
     return { answer, citations };
   } catch {
-    const answer = `${basePrompt}\n\nInput: ${input}\n\n${analysis.analysis ?? ''}`;
-    return { answer, citations: [] };
+    return { answer: fallbackAnswer, citations: [] };
   }
 }
 
@@ -1543,38 +1524,40 @@ export async function startSupervisorRun(params: {
 }
 
 export async function recoverRunningRunsOnBoot(): Promise<number> {
-  const p = pool;
-  if (!p) return 0;
+  return runWithSystemDbContext({}, async () => {
+    const p = pool;
+    if (!p) return 0;
 
-  const runningRuns = await p.query<{ id: string }>(
-    `SELECT id FROM agent_runs WHERE status = 'running'`
-  );
+    const runningRuns = await p.query<{ id: string }>(
+      `SELECT id FROM agent_runs WHERE status = 'running'`
+    );
 
-  if ((runningRuns.rowCount ?? 0) === 0) return 0;
+    if ((runningRuns.rowCount ?? 0) === 0) return 0;
 
-  const runIds = runningRuns.rows.map((row) => row.id);
-  const errorSummary = 'Run interrupted by server restart';
+    const runIds = runningRuns.rows.map((row) => row.id);
+    const errorSummary = 'Run interrupted by server restart';
 
-  await p.query(
-    `UPDATE agent_runs
-     SET status = 'failed',
-         error_summary = $2,
-         error = $2,
-         finished_at = NOW(),
-         updated_at = NOW()
-     WHERE id = ANY($1::uuid[])`,
-    [runIds, errorSummary]
-  );
+    await p.query(
+      `UPDATE agent_runs
+       SET status = 'failed',
+           error_summary = $2,
+           error = $2,
+           finished_at = NOW(),
+           updated_at = NOW()
+       WHERE id = ANY($1::uuid[])`,
+      [runIds, errorSummary]
+    );
 
-  await p.query(
-    `UPDATE agent_steps
-     SET status = 'aborted',
-         error = 'Step interrupted by server restart',
-         finished_at = NOW(),
-         updated_at = NOW()
-     WHERE run_id = ANY($1::uuid[]) AND status = 'running'`,
-    [runIds]
-  );
+    await p.query(
+      `UPDATE agent_steps
+       SET status = 'aborted',
+           error = 'Step interrupted by server restart',
+           finished_at = NOW(),
+           updated_at = NOW()
+       WHERE run_id = ANY($1::uuid[]) AND status = 'running'`,
+      [runIds]
+    );
 
-  return runIds.length;
+    return runIds.length;
+  });
 }
