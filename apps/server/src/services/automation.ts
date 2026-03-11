@@ -351,7 +351,7 @@ async function recordRun(
 
 // ── Core execution ─────────────────────────────────────────────────────────
 
-async function executeAutomation(
+export async function executeAutomation(
   automation: AutomationRow,
   event: AutomationEvent,
   triggeredBy: 'event' | 'schedule' | 'manual' = 'event',

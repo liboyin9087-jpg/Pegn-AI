@@ -31,6 +31,7 @@ vi.mock('../../middleware/auth.js', () => ({
 
 vi.mock('../../middleware/rbac.js', () => ({
   checkPermission: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  checkWorkspaceCapability: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 vi.mock('../../models/document.js', () => ({

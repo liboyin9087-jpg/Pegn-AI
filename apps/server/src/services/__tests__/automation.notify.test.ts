@@ -8,6 +8,17 @@ vi.mock('../../db/client.js', () => ({
   pool: mockPool,
 }));
 
+vi.mock('../jobService.js', () => ({
+  appendJobEvent: vi.fn().mockResolvedValue(undefined),
+  createJob: vi.fn().mockResolvedValue(undefined),
+  failJob: vi.fn().mockResolvedValue(undefined),
+  isCancelRequested: vi.fn().mockResolvedValue(false),
+  markCancelled: vi.fn().mockResolvedValue(undefined),
+  markTimeout: vi.fn().mockResolvedValue(undefined),
+  startJob: vi.fn().mockResolvedValue(undefined),
+  succeedJob: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../agent.js', () => ({
   startSupervisorRun: vi.fn(),
 }));
@@ -71,6 +82,17 @@ describe('executeAutomation notify action', () => {
         entityId: 'comment-1',
         payload: { thread_id: 'thread-1' },
         triggeredBy: 'user-99',
+      },
+      'event',
+      {
+        id: 'job-1',
+        workspaceId: 'ws-1',
+        jobType: 'automation_trigger',
+        sourceDomain: 'automation',
+        status: 'queued',
+        metadata: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       }
     );
 

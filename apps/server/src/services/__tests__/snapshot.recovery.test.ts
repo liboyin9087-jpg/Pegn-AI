@@ -22,8 +22,10 @@ const mockPool = {
   query: vi.fn(),
 };
 
+let activePool: typeof mockPool | null = mockPool;
+
 vi.mock('../../db/client.js', () => ({
-  get pool() { return mockPool; },
+  get pool() { return activePool; },
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ describe('verifySnapshotRecovery', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    activePool = mockPool;
   });
 
   it('回傳 healthy=true 當 snapshot 合法且可反序列化', async () => {
@@ -110,15 +113,12 @@ describe('verifySnapshotRecovery', () => {
   });
 
   it('回傳 healthy=false 當 DB 不可用', async () => {
-    // pool is replaced with null
-    vi.mock('../../db/client.js', () => ({ pool: null }));
-
-    // Force pool to null for this test
-    const { verifySnapshotRecovery: verify } = await import('../snapshot.js');
-    // We can't easily reset the module-level import; rely on mock coverage above.
-    // Instead just verify the structure:
+    activePool = null;
     const report = await verifySnapshotRecovery(DOC_ID);
-    // If pool mock is active and query throws:
+    expect(report.healthy).toBe(false);
+    expect(report.error).toMatch(/db unavailable/i);
+
+    activePool = mockPool;
     mockPool.query.mockRejectedValueOnce(new Error('connection refused'));
     const report2 = await verifySnapshotRecovery(DOC_ID);
     expect(report2.healthy).toBe(false);

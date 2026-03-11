@@ -63,17 +63,17 @@ function installDbMock() {
         user_id: params[2],
         type: params[3],
         query: params[4],
-        mode: params[5],
+        mode: params[6],
         status: 'queued',
-        input_summary: params[6],
+        input_summary: params[7],
         output_summary: null,
         error_summary: null,
         result: {},
         error: null,
         token_usage: 0,
-        parent_run_id: params[7],
-        root_run_id: params[8],
-        depth: params[9],
+        parent_run_id: params[12],
+        root_run_id: params[13],
+        depth: params[15],
         created_at: new Date('2026-03-07T10:00:00.000Z'),
         started_at: null,
         finished_at: null,
@@ -83,12 +83,34 @@ function installDbMock() {
     }
 
     if (normalized.startsWith('select * from agent_runs where id = $1')) {
-      const row = findRun(params[0], params[1], params[2]) ?? findRun(params[0], params[1]) ?? findRun(params[0]);
+      const hasWorkspaceScope = normalized.includes('workspace_id = $2');
+      const hasUserScope = normalized.includes('user_id = $3');
+      const row = hasUserScope
+        ? findRun(params[0], params[1], params[2])
+        : hasWorkspaceScope
+          ? findRun(params[0], params[1])
+          : findRun(params[0]);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
 
     if (normalized.startsWith('select * from agent_steps where run_id = $1')) {
       return { rows: steps.filter((step) => step.run_id === params[0]), rowCount: steps.filter((step) => step.run_id === params[0]).length };
+    }
+
+    if (normalized.startsWith('select * from agent_artifacts')) {
+      return { rows: [], rowCount: 0 };
+    }
+
+    if (normalized.startsWith('select count(*) as count from agent_artifacts')) {
+      return { rows: [{ count: '0' }], rowCount: 1 };
+    }
+
+    if (normalized.startsWith('insert into agent_artifacts')) {
+      return { rows: [], rowCount: 1 };
+    }
+
+    if (normalized.startsWith('select * from jobs where source_run_id = $1')) {
+      return { rows: [], rowCount: 0 };
     }
 
     if (normalized.startsWith('update agent_runs set status = \'running\'')) {

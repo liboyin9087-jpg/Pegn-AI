@@ -312,7 +312,10 @@ export async function verifySnapshotRecovery(documentId: string): Promise<Snapsh
 
     // 3. 反序列化驗證（Y.decodeSnapshot + encodeSnapshot 不拋出即視為健康）
     const snapshot = Y.decodeSnapshot(snapshotBuffer);
-    Y.encodeSnapshot(snapshot); // re-encode to confirm roundtrip
+    const reencoded = Buffer.from(Y.encodeSnapshot(snapshot));
+    if (Buffer.compare(reencoded, snapshotBuffer) !== 0) {
+      return { ...base, error: 'Snapshot decode mismatch', decode_ok: false };
+    }
     base.decode_ok = true;
     base.healthy = true;
 

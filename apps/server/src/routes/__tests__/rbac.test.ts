@@ -50,7 +50,7 @@ vi.mock('../../services/search.js', () => ({
 }));
 vi.mock('../../services/automation.js', () => ({
   emitAutomationEvent: vi.fn(),
-  executeAutomation: (...args: any[]) => mockExecuteAutomation(...args),
+  dispatchAutomationExecution: (...args: any[]) => mockExecuteAutomation(...args),
 }));
 vi.mock('../../services/agent.js', () => ({
   createAndStartAgentRun: (...args: any[]) => mockCreateAndStartAgentRun(...args),
@@ -146,7 +146,7 @@ describe('workspace governance routes', () => {
       createdAt: '2026-03-07T10:00:00.000Z',
       steps: [],
     });
-    mockExecuteAutomation.mockResolvedValue(undefined);
+    mockExecuteAutomation.mockResolvedValue({ jobId: 'job-1', status: 'queued' });
 
     mockPool.query.mockImplementation(async (sql: string, params: any[] = []) => {
       const normalized = normalizeSql(sql);
